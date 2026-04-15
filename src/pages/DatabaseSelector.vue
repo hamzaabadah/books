@@ -416,6 +416,154 @@
         </div>
       </div>
     </Modal>
+
+    <!-- ERPNext company picker (Books list-style layout) -->
+    <Modal
+      :open-modal="openERPNextCompanyPickerModal"
+      @closemodal="closeERPNextCompanyPicker"
+    >
+      <div
+        class="
+          p-4
+          text-gray-900
+          dark:text-gray-100
+          flex flex-col
+          w-form
+          max-w-[90vw]
+        "
+        style="max-height: min(560px, 85vh)"
+      >
+        <h2 class="text-xl font-semibold select-none shrink-0">
+          {{ t`Select ERPNext Company` }}
+        </h2>
+        <p class="text-sm mt-1 text-gray-600 dark:text-gray-400 shrink-0">
+          {{ t`Click a row to select, then press Continue.` }}
+        </p>
+
+        <div class="text-base flex flex-col overflow-hidden flex-1 min-h-0 mt-4">
+          <div
+            class="flex items-center shrink-0"
+            :style="{
+              paddingRight:
+                erpnextCompaniesList.length > 13 ? 'var(--w-scrollbar)' : '',
+            }"
+          >
+            <div class="w-8 text-end me-2 text-gray-700 dark:text-gray-400">
+              #
+            </div>
+            <Row
+              class="flex-1 text-gray-700 dark:text-gray-400 h-row-mid"
+              :column-count="3"
+              gap="1rem"
+            >
+              <div
+                class="
+                  overflow-x-auto
+                  no-scrollbar
+                  whitespace-nowrap
+                  h-row
+                  items-center
+                  flex
+                  min-w-0
+                "
+              >
+                {{ t`Company` }}
+              </div>
+              <div
+                class="
+                  overflow-x-auto
+                  no-scrollbar
+                  whitespace-nowrap
+                  h-row
+                  items-center
+                  flex
+                  min-w-0
+                "
+              >
+                {{ t`Abbr` }}
+              </div>
+              <div
+                class="
+                  overflow-x-auto
+                  no-scrollbar
+                  whitespace-nowrap
+                  h-row
+                  items-center
+                  flex
+                  pe-4
+                  min-w-0
+                "
+              >
+                {{ t`Country` }}
+              </div>
+            </Row>
+          </div>
+          <hr class="dark:border-gray-800 shrink-0" />
+
+          <div
+            class="
+              overflow-y-auto
+              dark:dark-scroll
+              custom-scroll custom-scroll-thumb1
+              flex-1
+              min-h-[12rem]
+            "
+          >
+            <div
+              v-for="(c, i) in erpnextCompaniesList"
+              :key="c.name"
+            >
+              <div
+                class="flex items-center cursor-pointer"
+                :class="
+                  erpnextPickerSelectedName === c.name
+                    ? 'bg-blue-50 dark:bg-blue-950/40'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-850'
+                "
+                role="button"
+                tabindex="0"
+                @click="erpnextPickerSelectedName = c.name"
+                @keydown.enter.prevent="erpnextPickerSelectedName = c.name"
+              >
+                <div class="w-8 text-end me-2 text-gray-700 dark:text-gray-400">
+                  {{ i + 1 }}
+                </div>
+                <Row
+                  class="flex-1 h-row-mid text-gray-900 dark:text-gray-300"
+                  :column-count="3"
+                  gap="1rem"
+                >
+                  <div class="min-w-0 truncate font-medium">{{ c.name }}</div>
+                  <div class="min-w-0 truncate text-gray-600 dark:text-gray-400">
+                    {{ c.abbr || '–' }}
+                  </div>
+                  <div
+                    class="min-w-0 truncate pe-4 text-gray-600 dark:text-gray-400"
+                  >
+                    {{ c.country || '–' }}
+                  </div>
+                </Row>
+              </div>
+              <hr
+                v-if="i !== erpnextCompaniesList.length - 1"
+                class="dark:border-gray-800"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-between mt-6 shrink-0">
+          <Button @click="closeERPNextCompanyPicker">{{ t`Cancel` }}</Button>
+          <Button
+            type="primary"
+            :disabled="!erpnextPickerSelectedName"
+            @click="confirmERPNextCompanyPicker"
+          >
+            {{ t`Continue` }}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 <script lang="ts">
@@ -428,6 +576,7 @@ import LanguageSelector from 'src/components/Controls/LanguageSelector.vue';
 import FeatherIcon from 'src/components/FeatherIcon.vue';
 import Loading from 'src/components/Loading.vue';
 import Modal from 'src/components/Modal.vue';
+import Row from 'src/components/Row.vue';
 import { fyo } from 'src/initFyo';
 import { showDialog } from 'src/utils/interactive';
 import { sendAPIRequest } from 'src/utils/api';
@@ -435,6 +584,13 @@ import { updateConfigFiles } from 'src/utils/misc';
 import { deleteDb, getSavePath, getSelectedFilePath } from 'src/utils/ui';
 import type { ConfigFilesWithModified } from 'utils/types';
 import { defineComponent } from 'vue';
+
+type ERPNextCompanyPickerRow = {
+  name: string;
+  abbr?: string;
+  default_currency?: string;
+  country?: string;
+};
 
 export default defineComponent({
   name: 'DatabaseSelector',
@@ -444,6 +600,7 @@ export default defineComponent({
     FeatherIcon,
     Modal,
     Button,
+    Row,
   },
   emits: ['file-selected', 'new-database'],
   data() {
@@ -459,6 +616,11 @@ export default defineComponent({
       creatingDemo: false,
       loadingDatabase: false,
       files: [],
+      openERPNextCompanyPickerModal: false,
+      erpnextCompaniesList: [] as ERPNextCompanyPickerRow[],
+      erpnextPickerSelectedName: '',
+      erpnextPickerBaseURL: '',
+      erpnextPickerToken: '',
     } as {
       openModal: boolean;
       erpnextImportAvailable: boolean;
@@ -471,6 +633,11 @@ export default defineComponent({
       creatingDemo: boolean;
       loadingDatabase: boolean;
       files: ConfigFilesWithModified[];
+      openERPNextCompanyPickerModal: boolean;
+      erpnextCompaniesList: ERPNextCompanyPickerRow[];
+      erpnextPickerSelectedName: string;
+      erpnextPickerBaseURL: string;
+      erpnextPickerToken: string;
     };
   },
   async mounted() {
@@ -636,7 +803,7 @@ export default defineComponent({
             baseURL: string;
             token: string;
             sendAPIRequest: typeof sendAPIRequest;
-          }) => Promise<Array<{ name: string }>>);
+          }) => Promise<ERPNextCompanyPickerRow[]>);
 
       if (!getERPNextCompanies) {
         await showDialog({
@@ -646,25 +813,8 @@ export default defineComponent({
         });
         return;
       }
-      const getERPNextCompanyTemplate = mod
-        ?.getERPNextCompanyTemplate as
-        | undefined
-        | ((params: {
-            baseURL: string;
-            token: string;
-            company: string;
-            sendAPIRequest: typeof sendAPIRequest;
-          }) => Promise<{
-            company: { name: string };
-            meta?: {
-              accounts_parent_first?: boolean;
-              accounts_parent_first_violations?: number;
-              accounts_count?: number;
-            };
-            accounts: Array<unknown>;
-          }>);
 
-      let companies: Array<{ name: string }> = [];
+      let companies: ERPNextCompanyPickerRow[] = [];
       try {
         companies = await getERPNextCompanies({ baseURL, token, sendAPIRequest });
       } catch (error) {
@@ -691,30 +841,66 @@ export default defineComponent({
         return;
       }
 
-      const maxButtons = 6;
-      const picked = (await showDialog({
-        title: this.t`Select ERPNext Company`,
-        detail:
-          companies.length > maxButtons
-            ? this.t`Showing first ${maxButtons} companies.`
-            : undefined,
-        type: 'info',
-        buttons: [
-          ...companies.slice(0, maxButtons).map((c) => ({
-            label: c.name,
-            action: () => c.name,
-          })),
-          {
-            label: this.t`Cancel`,
-            action: () => null,
-            isEscape: true,
-          },
-        ],
-      })) as string | null;
-
+      this.erpnextCompaniesList = companies;
+      this.erpnextPickerBaseURL = baseURL;
+      this.erpnextPickerToken = token;
+      this.erpnextPickerSelectedName =
+        companies.length === 1 ? companies[0].name : '';
+      this.openERPNextCompanyPickerModal = true;
+    },
+    closeERPNextCompanyPicker() {
+      this.openERPNextCompanyPickerModal = false;
+      this.erpnextCompaniesList = [];
+      this.erpnextPickerSelectedName = '';
+      this.erpnextPickerBaseURL = '';
+      this.erpnextPickerToken = '';
+    },
+    async confirmERPNextCompanyPicker() {
+      const picked = this.erpnextPickerSelectedName;
       if (!picked) {
         return;
       }
+      const baseURL = this.erpnextPickerBaseURL;
+      const token = this.erpnextPickerToken;
+      this.openERPNextCompanyPickerModal = false;
+      this.erpnextCompaniesList = [];
+      this.erpnextPickerSelectedName = '';
+      this.erpnextPickerBaseURL = '';
+      this.erpnextPickerToken = '';
+      await this.fetchERPNextTemplateAndSummarize({
+        baseURL,
+        token,
+        picked,
+      });
+    },
+    async fetchERPNextTemplateAndSummarize({
+      baseURL,
+      token,
+      picked,
+    }: {
+      baseURL: string;
+      token: string;
+      picked: string;
+    }) {
+      const ext = await import('books-erpnext-sync-extended');
+      const mod = (ext as any)?.default ?? ext;
+      const getERPNextCompanyTemplate = mod
+        ?.getERPNextCompanyTemplate as
+        | undefined
+        | ((params: {
+            baseURL: string;
+            token: string;
+            company: string;
+            sendAPIRequest: typeof sendAPIRequest;
+          }) => Promise<{
+            company: { name: string };
+            meta?: {
+              accounts_parent_first?: boolean;
+              accounts_parent_first_violations?: number;
+              accounts_count?: number;
+            };
+            accounts: Array<unknown>;
+          }>);
 
       if (!getERPNextCompanyTemplate) {
         await showDialog({
