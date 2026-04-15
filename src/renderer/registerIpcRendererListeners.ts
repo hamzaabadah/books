@@ -1,6 +1,9 @@
 import { handleError } from 'src/errorHandling';
 import { fyo } from 'src/initFyo';
-import { syncDocumentsToERPNext } from 'src/utils/erpnextSync';
+import {
+  syncDocumentsFromERPNext,
+  syncDocumentsToERPNext,
+} from 'src/utils/erpnextSync';
 
 export default function registerIpcRendererListeners() {
   ipc.registerMainProcessErrorListener(
@@ -27,7 +30,30 @@ export default function registerIpcRendererListeners() {
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   ipc.registerTriggerFrontendActionListener(async () => {
-    await syncDocumentsToERPNext(fyo);
+    // Scheduled sync tick from main process (Bree job).
+    // Run pull then push based on enabled settings.
+    const isEnabled = !!fyo.singles.ERPNextSyncSettings?.isEnabled;
+    if (!isEnabled) {
+      return;
+    }
+
+    const pull = !!fyo.singles.ERPNextSyncSettings?.syncDataFromServer;
+    const push = !!fyo.singles.ERPNextSyncSettings?.syncDataToServer;
+
+    try {
+      if (pull) {
+        await syncDocumentsFromERPNext(fyo, false);
+      }
+      if (push) {
+        await syncDocumentsToERPNext(fyo);
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      handleError(true, error, { operation: 'scheduled_erpnext_sync' }, false);
+    }
   });
 
   ipc.registerConsoleLogListener((_, ...stuff: unknown[]) => {
