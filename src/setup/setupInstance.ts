@@ -509,6 +509,11 @@ export async function setupInstanceFromERPNextTemplate(
       country?: string;
       default_currency?: string;
     };
+    _connection?: {
+      baseURL: string;
+      token: string;
+      company: string;
+    };
     accounts: Array<{
       name: string;
       parent_account?: string | null;
@@ -609,6 +614,20 @@ export async function setupInstanceFromERPNextTemplate(
     setupWizardOptions.bankName = bankName;
 
     await updateAccountingSettings(setupWizardOptions, fyo);
+
+    // Persist ERPNext connection in the new DB so sync is ready.
+    if (template._connection?.baseURL && template._connection?.token) {
+      const syncSettings = await fyo.doc.getDoc(ModelNameEnum.ERPNextSyncSettings);
+      await syncSettings.setAndSync({
+        baseURL: template._connection.baseURL,
+        authToken: template._connection.token,
+      });
+
+      const accountingSettings = (await fyo.doc.getDoc(
+        ModelNameEnum.AccountingSettings
+      )) as AccountingSettings;
+      await accountingSettings.setAndSync('enableERPNextSync', true);
+    }
 
     const erpDiscount =
       typeof rawDefaults?.default_discount_account === 'string'

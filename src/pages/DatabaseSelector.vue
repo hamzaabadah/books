@@ -596,6 +596,11 @@ type ERPNextImportPendingTemplate = {
     default_currency?: string;
     time_zone?: string;
   };
+  _connection?: {
+    baseURL: string;
+    token: string;
+    company: string;
+  };
   defaults?: Record<string, unknown>;
   fiscal_year?: {
     name?: string;
@@ -992,7 +997,10 @@ export default defineComponent({
       const violations = meta.accounts_parent_first_violations ?? 0;
 
       this.erpnextImportPendingTemplate =
-        template as ERPNextImportPendingTemplate;
+        {
+          ...(template as ERPNextImportPendingTemplate),
+          _connection: { baseURL, token, company: picked },
+        };
 
       const createLocal = await showDialog({
         title: this.t`Template fetched`,
@@ -1035,6 +1043,15 @@ export default defineComponent({
         });
         return;
       }
+      const conn = template._connection;
+      if (!conn?.baseURL || !conn?.token || !conn?.company) {
+        await showDialog({
+          title: this.t`Missing ERPNext connection`,
+          type: 'warning',
+          detail: this.t`Please fetch the ERPNext template again.`,
+        });
+        return;
+      }
 
       const slug = slugForDbFile(
         template.company.company_name || template.company.name || 'company'
@@ -1049,7 +1066,11 @@ export default defineComponent({
       this.creationPercent = 0;
 
       try {
-        await setupInstanceFromERPNextTemplate(filePath, template, fyo);
+        await setupInstanceFromERPNextTemplate(
+          filePath,
+          { ...template, _connection: conn },
+          fyo
+        );
         updateConfigFiles(fyo);
         await fyo.purgeCache();
         this.erpnextImportPendingTemplate = null;
