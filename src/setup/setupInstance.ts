@@ -621,6 +621,7 @@ export async function setupInstanceFromERPNextTemplate(
       await syncSettings.setAndSync({
         baseURL: template._connection.baseURL,
         authToken: template._connection.token,
+        erpnextCompany: template._connection.company,
       });
 
       const accountingSettings = (await fyo.doc.getDoc(

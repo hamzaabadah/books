@@ -27,6 +27,7 @@ export async function registerInstanceToERPNext(fyo: Fyo) {
   const token = syncSettingsDoc.authToken;
   let deviceID = syncSettingsDoc.deviceID;
   const instanceName = syncSettingsDoc.instanceName;
+  const erpnextCompany = syncSettingsDoc.erpnextCompany;
 
   if (!baseURL || !token) {
     const errorMsg = 'Missing baseURL or authToken for ERPNext registration';
@@ -60,6 +61,43 @@ export async function registerInstanceToERPNext(fyo: Fyo) {
     const errorMsg =
       response.message.message || 'Failed to register instance to ERPNext';
     throw new ValidationError(errorMsg);
+  }
+
+  // Optional: bind this instance to the selected ERPNext company
+  // (ERPNext-side Books Instance.erpnext_company).
+  if (erpnextCompany) {
+    try {
+      const bindRes = (await sendAPIRequest(
+        `${baseURL}/api/method/books_integration.api.set_instance_company`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            instance: deviceID,
+            company: erpnextCompany,
+          }),
+        }
+      )) as unknown as ERPNextSyncSettingsAPIResponse;
+
+      if (!bindRes?.message?.success) {
+        // Non-fatal: sync can still work without binding.
+        if (fyo.store.isDevelopment) {
+          // eslint-disable-next-line no-console
+          console.error(
+            'ERPNext sync: set_instance_company failed',
+            bindRes?.message?.message ?? bindRes
+          );
+        }
+      }
+    } catch (e) {
+      if (fyo.store.isDevelopment) {
+        // eslint-disable-next-line no-console
+        console.error('ERPNext sync: set_instance_company failed', e);
+      }
+    }
   }
 }
 

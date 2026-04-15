@@ -25,6 +25,12 @@
       "section": "Default"
     },
     {
+      "label": "ERPNext Company",
+      "fieldname": "erpnextCompany",
+      "fieldtype": "Data",
+      "section": "Default"
+    },
+    {
       "label": "Initial Sync Data",
       "fieldname": "initialSyncData",
       "fieldtype": "Check",

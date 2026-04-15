@@ -8,6 +8,7 @@ export class ERPNextSyncSettings extends Doc {
   instanceName?: string;
   baseURL?: string;
   authToken?: string;
+  erpnextCompany?: string;
   integrationAppVersion?: string;
   isEnabled?: boolean;
   initialSyncData?: boolean;
