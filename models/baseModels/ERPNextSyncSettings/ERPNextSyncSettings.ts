@@ -3,6 +3,16 @@ import { ChangeArg, HiddenMap } from 'fyo/model/types';
 import { initERPNSync, syncDocumentsToERPNext } from 'src/utils/erpnextSync';
 import { ErrorLogEnum } from 'fyo/telemetry/types';
 
+function safeStringify(value: unknown, maxLen = 20000): string {
+  try {
+    const s = JSON.stringify(value, null, 2);
+    if (s.length <= maxLen) return s;
+    return s.slice(0, maxLen) + `\n... (truncated, total ${s.length} chars)`;
+  } catch (e) {
+    return `<<failed to stringify: ${e instanceof Error ? e.message : String(e)}>>`;
+  }
+}
+
 export class ERPNextSyncSettings extends Doc {
   deviceID?: string;
   instanceName?: string;
@@ -69,10 +79,12 @@ export class ERPNextSyncSettings extends Doc {
           await this.fyo.doc
             .getNewDoc(ErrorLogEnum.IntegrationErrorLog, {
               error: errorMessage,
-              data: JSON.stringify({
+              data: safeStringify({
                 instance: this.deviceID,
                 operation: 'sync_data_from_server',
                 trigger: 'change_event',
+                stack: error instanceof Error ? error.stack : undefined,
+                rawError: error,
               }),
             })
             .sync();
@@ -92,10 +104,12 @@ export class ERPNextSyncSettings extends Doc {
           await this.fyo.doc
             .getNewDoc(ErrorLogEnum.IntegrationErrorLog, {
               error: errorMessage,
-              data: JSON.stringify({
+              data: safeStringify({
                 instance: this.deviceID,
                 operation: 'sync_data_to_server',
                 trigger: 'change_event',
+                stack: error instanceof Error ? error.stack : undefined,
+                rawError: error,
               }),
             })
             .sync();

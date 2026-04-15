@@ -12,6 +12,35 @@ import { getRandomString } from '../../utils';
 import { ValidationError } from 'fyo/utils/errors';
 import { PricingRule } from 'models/baseModels/PricingRule/PricingRule';
 import { PricingRuleItem } from 'models/baseModels/PricingRuleItem/PricingRuleItem';
+import { ErrorLogEnum } from 'fyo/telemetry/types';
+
+function safeStringify(value: unknown, maxLen = 20000): string {
+  try {
+    const s = JSON.stringify(value, null, 2);
+    if (s.length <= maxLen) return s;
+    return s.slice(0, maxLen) + `\n... (truncated, total ${s.length} chars)`;
+  } catch (e) {
+    return `<<failed to stringify: ${e instanceof Error ? e.message : String(e)}>>`;
+  }
+}
+
+async function logIntegrationError(
+  fyo: Fyo,
+  error: unknown,
+  context: Record<string, unknown>
+) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  try {
+    await fyo.doc
+      .getNewDoc(ErrorLogEnum.IntegrationErrorLog, {
+        error: errorMessage,
+        data: safeStringify(context),
+      })
+      .sync();
+  } catch {
+    // Never break sync because logging failed.
+  }
+}
 
 export async function registerInstanceToERPNext(fyo: Fyo) {
   if (!navigator.onLine) {
@@ -669,6 +698,16 @@ export async function performInitialFullSync(fyo: Fyo) {
           const fullErrorMsg = `Failed to process document ${String(
             doc.name ?? doc.fbooksDocName
           )} of type ${docType}: ${errorMsg}`;
+
+          await logIntegrationError(fyo, error, {
+            operation: 'initial_full_sync',
+            baseURL,
+            deviceID,
+            docType,
+            docName,
+            erpnextDocName: (doc.erpnextDocName as string) || (doc.name as string),
+            payloadFromERPNext: doc,
+          });
           throw new Error(fullErrorMsg);
         }
       }
