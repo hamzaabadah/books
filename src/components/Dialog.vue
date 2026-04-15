@@ -31,11 +31,17 @@
           </div>
 
           <template v-if="detail">
-            <p v-if="typeof detail === 'string'" class="text-base">
+            <div
+              v-if="typeof detail === 'string' && detailIsHtml"
+              class="text-base dialog-detail-html break-words"
+              v-html="detail"
+            />
+
+            <p v-else-if="typeof detail === 'string'" class="text-base">
               {{ detail }}
             </p>
 
-            <div v-else v-for="d of detail">
+            <div v-else v-for="(d, i) of detail" :key="i">
               <p class="text-base">{{ d }}</p>
             </div>
           </template>
@@ -71,6 +77,10 @@ export default defineComponent({
     detail: {
       type: [String, Array] as PropType<string | string[]>,
       required: false,
+    },
+    detailIsHtml: {
+      type: Boolean,
+      default: false,
     },
     buttons: {
       type: Array as PropType<DialogButton[]>,
@@ -171,5 +181,25 @@ export default defineComponent({
 .v-enter-to .inner,
 .v-leave-from .inner {
   transform: translateY(0px);
+}
+
+/* v-html detail: links/lists inherit dialog text color */
+.dialog-detail-html :deep(a) {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+}
+
+.dark .dialog-detail-html :deep(a) {
+  color: rgb(147 197 253);
+}
+
+.dialog-detail-html :deep(ul),
+.dialog-detail-html :deep(ol) {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.dialog-detail-html :deep(p) {
+  margin: 0.25rem 0;
 }
 </style>

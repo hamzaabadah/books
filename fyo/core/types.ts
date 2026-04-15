@@ -34,8 +34,12 @@ export type AuthDemuxConstructor = new (isElectron?: boolean) => AuthDemuxBase;
 export type ConfigMap = {
   files: ConfigFile[];
   lastSelectedFilePath: null | string;
-  language: string 
-  deviceId: string
+  language: string;
+  deviceId: string;
+  /** ERPNext import settings used before a DB exists (welcome screen). */
+  erpnextImportBaseURL?: string;
+  /** ERPNext API token in the form api_key:api_secret. */
+  erpnextImportAuthToken?: string;
 };
 
 export interface ConfigFile {

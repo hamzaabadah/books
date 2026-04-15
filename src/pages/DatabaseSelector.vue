@@ -346,6 +346,74 @@
         </div>
       </div>
     </Modal>
+
+    <!-- ERPNext Import Settings -->
+    <Modal
+      :open-modal="openERPNextImportModal"
+      @closemodal="openERPNextImportModal = false"
+    >
+      <div class="p-4 text-gray-900 dark:text-gray-100 w-form">
+        <h2 class="text-xl font-semibold select-none">
+          {{ t`ERPNext Import Settings` }}
+        </h2>
+        <p class="text-base mt-2 text-gray-700 dark:text-gray-400">
+          {{ t`Enter your ERPNext API Base URL and Auth Token (API Key:API Secret).` }}
+        </p>
+
+        <div class="mt-6 flex flex-col gap-4 text-base">
+          <div class="flex flex-col gap-2">
+            <label class="text-gray-600 dark:text-gray-400">{{
+              t`API Base URL`
+            }}</label>
+            <input
+              v-model="erpnextBaseURLInput"
+              type="text"
+              placeholder="https://your-site"
+              class="
+                bg-gray-100
+                dark:bg-gray-875
+                focus:bg-gray-200
+                dark:focus:bg-gray-890
+                rounded-md
+                px-3
+                py-2
+                outline-none
+              "
+            />
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-gray-600 dark:text-gray-400">{{
+              t`Auth Token`
+            }}</label>
+            <input
+              v-model="erpnextAuthTokenInput"
+              type="password"
+              placeholder="api_key:api_secret"
+              class="
+                bg-gray-100
+                dark:bg-gray-875
+                focus:bg-gray-200
+                dark:focus:bg-gray-890
+                rounded-md
+                px-3
+                py-2
+                outline-none
+              "
+            />
+          </div>
+        </div>
+
+        <div class="flex justify-between mt-8">
+          <Button @click="openERPNextImportModal = false">{{
+            t`Cancel`
+          }}</Button>
+          <Button type="primary" @click="saveERPNextImportSettings">{{
+            t`Save`
+          }}</Button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 <script lang="ts">
@@ -353,7 +421,6 @@ import { setupDummyInstance } from 'dummy';
 import { t } from 'fyo';
 import { Verb } from 'fyo/telemetry/types';
 import { DateTime } from 'luxon';
-import { ModelNameEnum } from 'models/types';
 import Button from 'src/components/Button.vue';
 import LanguageSelector from 'src/components/Controls/LanguageSelector.vue';
 import FeatherIcon from 'src/components/FeatherIcon.vue';
@@ -361,6 +428,7 @@ import Loading from 'src/components/Loading.vue';
 import Modal from 'src/components/Modal.vue';
 import { fyo } from 'src/initFyo';
 import { showDialog } from 'src/utils/interactive';
+import { sendAPIRequest } from 'src/utils/api';
 import { updateConfigFiles } from 'src/utils/misc';
 import { deleteDb, getSavePath, getSelectedFilePath } from 'src/utils/ui';
 import type { ConfigFilesWithModified } from 'utils/types';
@@ -380,6 +448,9 @@ export default defineComponent({
     return {
       openModal: false,
       erpnextImportAvailable: false,
+      openERPNextImportModal: false,
+      erpnextBaseURLInput: '',
+      erpnextAuthTokenInput: '',
       baseCount: 100,
       creationMessage: '',
       creationPercent: 0,
@@ -389,6 +460,9 @@ export default defineComponent({
     } as {
       openModal: boolean;
       erpnextImportAvailable: boolean;
+      openERPNextImportModal: boolean;
+      erpnextBaseURLInput: string;
+      erpnextAuthTokenInput: string;
       baseCount: number;
       creationMessage: string;
       creationPercent: number;
@@ -406,7 +480,33 @@ export default defineComponent({
       window.ds = this;
     }
   },
+  async activated() {
+    // This screen can be cached; re-check to pick up newly installed extensions.
+    await this.checkERPNextImportAvailability();
+  },
   methods: {
+    saveERPNextImportSettings() {
+      let baseURL = this.erpnextBaseURLInput.trim().replace(/\/$/, '');
+      // Users sometimes paste full method base, normalize to site base.
+      baseURL = baseURL.replace(/\/api\/method\/?$/, '');
+      const token = this.erpnextAuthTokenInput.trim();
+
+      if (!baseURL || !token) {
+        void showDialog({
+          title: this.t`Missing values`,
+          detail: this.t`Please enter both API Base URL and Auth Token.`,
+          type: 'warning',
+        });
+        return;
+      }
+
+      this.fyo.config.set('erpnextImportBaseURL' as any, baseURL);
+      this.fyo.config.set('erpnextImportAuthToken' as any, token);
+      this.openERPNextImportModal = false;
+
+      // Continue the flow after saving.
+      void this.fromERPNextCompany();
+    },
     async checkERPNextImportAvailability() {
       try {
         const ext = await import('books-erpnext-sync-extended');
@@ -507,18 +607,17 @@ export default defineComponent({
         return;
       }
 
-      const syncSettingsDoc = await this.fyo.doc.getDoc(
-        ModelNameEnum.ERPNextSyncSettings
-      );
-      const baseURL = syncSettingsDoc.get('baseURL') as string | undefined;
-      const token = syncSettingsDoc.get('authToken') as string | undefined;
+      const baseURL = this.fyo.config.get('erpnextImportBaseURL' as any) as
+        | string
+        | undefined;
+      const token = this.fyo.config.get('erpnextImportAuthToken' as any) as
+        | string
+        | undefined;
 
       if (!baseURL || !token) {
-        await showDialog({
-          title: this.t`ERPNext Sync is not configured`,
-          detail: this.t`Go to Settings → ERPNext Sync and set API Base URL and Auth Token.`,
-          type: 'warning',
-        });
+        this.erpnextBaseURLInput = baseURL ?? '';
+        this.erpnextAuthTokenInput = token ?? '';
+        this.openERPNextImportModal = true;
         return;
       }
 
@@ -527,9 +626,11 @@ export default defineComponent({
       const getERPNextCompanies = mod
         ?.getERPNextCompanies as
         | undefined
-        | ((params: { baseURL: string; token: string }) => Promise<
-            Array<{ name: string }>
-          >);
+        | ((params: {
+            baseURL: string;
+            token: string;
+            sendAPIRequest: typeof sendAPIRequest;
+          }) => Promise<Array<{ name: string }>>);
 
       if (!getERPNextCompanies) {
         await showDialog({
@@ -546,6 +647,7 @@ export default defineComponent({
             baseURL: string;
             token: string;
             company: string;
+            sendAPIRequest: typeof sendAPIRequest;
           }) => Promise<{
             company: { name: string };
             meta?: {
@@ -558,12 +660,17 @@ export default defineComponent({
 
       let companies: Array<{ name: string }> = [];
       try {
-        companies = await getERPNextCompanies({ baseURL, token });
+        companies = await getERPNextCompanies({ baseURL, token, sendAPIRequest });
       } catch (error) {
+        if (this.fyo.store.isDevelopment) {
+          // eslint-disable-next-line no-console
+          console.error('ERPNext import: get_companies failed', error);
+        }
         const message = error instanceof Error ? error.message : String(error);
         await showDialog({
           title: this.t`Failed to fetch companies`,
           detail: message,
+          detailIsHtml: true,
           type: 'error',
         });
         return;
@@ -628,12 +735,18 @@ export default defineComponent({
           baseURL,
           token,
           company: picked,
+          sendAPIRequest,
         });
       } catch (error) {
+        if (this.fyo.store.isDevelopment) {
+          // eslint-disable-next-line no-console
+          console.error('ERPNext import: get_company_template failed', error);
+        }
         const message = error instanceof Error ? error.message : String(error);
         await showDialog({
           title: this.t`Failed to fetch company template`,
           detail: message,
+          detailIsHtml: true,
           type: 'error',
         });
         return;

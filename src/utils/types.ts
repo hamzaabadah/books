@@ -109,6 +109,11 @@ export interface DialogOptions {
   title: string;
   type?: ToastType;
   detail?: string | string[];
+  /**
+   * When true, string `detail` is rendered as HTML (`v-html`).
+   * Use only for trusted content (e.g. your own server); never pass unsanitized user input.
+   */
+  detailIsHtml?: boolean;
   buttons?: DialogButton[];
 }
 
