@@ -607,6 +607,11 @@ type ERPNextImportPendingTemplate = {
     year_start_date?: string;
     year_end_date?: string;
   } | null;
+  item_tax_templates?: Array<{
+    name: string;
+    title?: string;
+    rows: Array<{ tax_type: string; tax_rate?: number }>;
+  }>;
   meta?: {
     accounts_parent_first?: boolean;
     accounts_parent_first_violations?: number;

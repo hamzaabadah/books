@@ -467,6 +467,60 @@ async function applyErpnextCompanyDefaultAccounts(
   await apply('discountAccount', 'default_discount_account');
 }
 
+async function createBooksTaxesFromItemTaxTemplates(
+  fyo: Fyo,
+  itemTaxTemplates:
+    | Array<{
+        name: string;
+        title?: string;
+        rows: Array<{ tax_type: string; tax_rate?: number }>;
+      }>
+    | undefined
+): Promise<Array<{ erpn_tax_template: string; books_tax_template: string }>> {
+  const mappings: Array<{ erpn_tax_template: string; books_tax_template: string }> =
+    [];
+
+  if (!itemTaxTemplates?.length) {
+    return mappings;
+  }
+
+  for (const tmpl of itemTaxTemplates) {
+    const erpName = String(tmpl.name ?? '').trim();
+    if (!erpName) continue;
+
+    const title = (tmpl.title ?? '').trim();
+    const booksTaxName = title || erpName;
+
+    const details = (tmpl.rows ?? [])
+      .map((r) => {
+        const account = String(r.tax_type ?? '').trim();
+        const rate = Number(r.tax_rate ?? 0);
+        if (!account || !Number.isFinite(rate)) return null;
+        return { account, payment_account: null, rate };
+      })
+      .filter(Boolean) as Array<{
+      account: string;
+      payment_account: null;
+      rate: number;
+    }>;
+
+    if (!details.length) continue;
+
+    await checkAndCreateDoc(
+      ModelNameEnum.Tax,
+      {
+        name: booksTaxName,
+        details,
+      },
+      fyo
+    );
+
+    mappings.push({ erpn_tax_template: erpName, books_tax_template: booksTaxName });
+  }
+
+  return mappings;
+}
+
 async function createAccountsFromERPNextList(
   accounts: Array<{
     name: string;
@@ -522,6 +576,11 @@ export async function setupInstanceFromERPNextTemplate(
       account_type?: string;
     }>;
     defaults?: Record<string, unknown>;
+    item_tax_templates?: Array<{
+      name: string;
+      title?: string;
+      rows: Array<{ tax_type: string; tax_rate?: number }>;
+    }>;
     fiscal_year?: {
       name?: string;
       year_start_date?: unknown;
@@ -584,6 +643,10 @@ export async function setupInstanceFromERPNextTemplate(
     await updatePrintSettings(setupWizardOptions, fyo);
     await createCurrencyRecords(fyo);
     await createAccountsFromERPNextList(template.accounts, fyo);
+    const taxMappings = await createBooksTaxesFromItemTaxTemplates(
+      fyo,
+      template.item_tax_templates
+    );
 
     let bankName = '';
     if (
@@ -628,6 +691,24 @@ export async function setupInstanceFromERPNextTemplate(
         ModelNameEnum.AccountingSettings
       )) as AccountingSettings;
       await accountingSettings.setAndSync('enableERPNextSync', true);
+
+      // Persist Item Tax Template mappings into ERPNext Books Sync Settings.
+      if (taxMappings.length) {
+        try {
+          const { sendAPIRequest } = await import('src/utils/api');
+          const url = `${template._connection.baseURL.replace(/\/$/, '')}/api/method/books_integration.api.upsert_item_tax_template_mappings`;
+          await sendAPIRequest(url, {
+            method: 'POST',
+            headers: {
+              Authorization: `token ${template._connection.token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ mappings: taxMappings }),
+          });
+        } catch {
+          // non-fatal
+        }
+      }
     }
 
     const erpDiscount =
