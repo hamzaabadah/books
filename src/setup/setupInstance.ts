@@ -449,7 +449,12 @@ async function applyErpnextCompanyDefaultAccounts(
   )) as AccountingSettings;
 
   const apply = async (
-    booksField: 'writeOffAccount' | 'roundOffAccount' | 'discountAccount',
+    booksField:
+      | 'writeOffAccount'
+      | 'roundOffAccount'
+      | 'discountAccount'
+      | 'defaultIncomeAccount'
+      | 'defaultExpenseAccount',
     erpKey: string
   ) => {
     const v = defaults[erpKey];
@@ -465,6 +470,8 @@ async function applyErpnextCompanyDefaultAccounts(
   await apply('writeOffAccount', 'write_off_account');
   await apply('roundOffAccount', 'round_off_account');
   await apply('discountAccount', 'default_discount_account');
+  await apply('defaultIncomeAccount', 'default_income_account');
+  await apply('defaultExpenseAccount', 'default_expense_account');
 }
 
 async function createBooksTaxesFromItemTaxTemplates(

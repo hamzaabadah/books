@@ -66,6 +66,20 @@
       "section": "Accounts"
     },
     {
+      "label": "Default Sales Account",
+      "fieldname": "defaultIncomeAccount",
+      "fieldtype": "Link",
+      "target": "Account",
+      "section": "Accounts"
+    },
+    {
+      "label": "Default Purchase Account",
+      "fieldname": "defaultExpenseAccount",
+      "fieldtype": "Link",
+      "target": "Account",
+      "section": "Accounts"
+    },
+    {
       "fieldname": "enableDiscounting",
       "label": "Enable Discount Accounting",
       "fieldtype": "Check",

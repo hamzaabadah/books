@@ -42,6 +42,14 @@ export class AccountingSettings extends Doc {
       isGroup: false,
       rootType: 'Income',
     }),
+    defaultIncomeAccount: () => ({
+      isGroup: false,
+      rootType: 'Income',
+    }),
+    defaultExpenseAccount: () => ({
+      isGroup: false,
+      rootType: 'Expense',
+    }),
   };
 
   validations: ValidationMap = {

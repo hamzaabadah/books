@@ -37,6 +37,13 @@ export class Item extends Doc {
   formulas: FormulaMap = {
     incomeAccount: {
       formula: async () => {
+        const configured = this.fyo.singles.AccountingSettings
+          ?.defaultIncomeAccount as string | undefined | null;
+        if (configured) {
+          const exists = await this.fyo.db.exists('Account', configured);
+          if (exists) return configured;
+        }
+
         let accountName = 'Service';
         if (this.itemType === 'Product') {
           accountName = 'Sales';
@@ -49,6 +56,13 @@ export class Item extends Doc {
     },
     expenseAccount: {
       formula: async () => {
+        const configured = this.fyo.singles.AccountingSettings
+          ?.defaultExpenseAccount as string | undefined | null;
+        if (configured) {
+          const exists = await this.fyo.db.exists('Account', configured);
+          if (exists) return configured;
+        }
+
         if (this.trackItem) {
           return this.fyo.singles.InventorySettings
             ?.stockReceivedButNotBilled as string;
