@@ -1,11 +1,16 @@
 import Bree from 'bree';
+import fs from 'fs-extra';
 import path from 'path';
 import main from 'main';
 
 let bree: Bree;
 
 export async function initScheduler(interval: string) {
-  const jobsRoot = path.join(__dirname, '..', '..', 'jobs');
+  const devJobsRoot = path.join(__dirname, '..', '..', 'jobs');
+  const prodJobsRoot = path.join(process.resourcesPath, '..', 'jobs');
+  const jobsRoot = main.isDevelopment ? devJobsRoot : prodJobsRoot;
+
+  await fs.ensureDir(jobsRoot);
 
   if (bree) {
     await bree.stop();
