@@ -20,7 +20,26 @@ function safeStringify(value: unknown, maxLen = 20000): string {
     if (s.length <= maxLen) return s;
     return s.slice(0, maxLen) + `\n... (truncated, total ${s.length} chars)`;
   } catch (e) {
-    return `<<failed to stringify: ${e instanceof Error ? e.message : String(e)}>>`;
+    return `<<failed to stringify: ${
+      e instanceof Error ? e.message : String(e)
+    }>>`;
+  }
+}
+
+/**
+ * Doc.set / setMultiple append array values to table fields instead of replacing rows.
+ * Clear each incoming table on an existing doc so ERPNext pulls replace child rows
+ * (e.g. SalesInvoice.items) instead of duplicating them.
+ */
+function resetExistingDocTablesFromPayload(
+  existingDoc: Doc,
+  incoming: DocValueMap
+) {
+  for (const { fieldname } of existingDoc.tableFields) {
+    const v = incoming[fieldname];
+    if (Array.isArray(v)) {
+      (existingDoc as DocValueMap)[fieldname] = [];
+    }
   }
 }
 
@@ -280,6 +299,7 @@ export async function syncDocumentsFromERPNext(fyo: Fyo, shouldThrow = false) {
           doc.name = doc.fbooksDocName ?? doc.name;
           doc = checkDocDataTypes(fyo, doc) as DocValueMap;
 
+          resetExistingDocTablesFromPayload(existingDoc, doc);
           await existingDoc.setMultiple(doc);
           await performPreSync(fyo, doc);
           await appendDocValues(existingDoc as DocValueMap, doc);
@@ -599,6 +619,7 @@ async function updateExistingDocument(
   doc.name = doc.fbooksDocName ?? doc.name;
   doc = checkDocDataTypes(fyo, doc) as DocValueMap;
 
+  resetExistingDocTablesFromPayload(existingDoc, doc);
   await existingDoc.setMultiple(doc);
   await performPreSync(fyo, doc);
   await appendDocValues(existingDoc as DocValueMap, doc);
@@ -705,7 +726,8 @@ export async function performInitialFullSync(fyo: Fyo) {
             deviceID,
             docType,
             docName,
-            erpnextDocName: (doc.erpnextDocName as string) || (doc.name as string),
+            erpnextDocName:
+              (doc.erpnextDocName as string) || (doc.name as string),
             payloadFromERPNext: doc,
           });
           throw new Error(fullErrorMsg);
@@ -1039,9 +1061,7 @@ function checkDocDataTypes(
 }
 
 function isValidSyncableDocName(doctype: string): boolean {
-  return getSyncConfigProvider()
-    .getFetchSyncableDoctypes()
-    .includes(doctype);
+  return getSyncConfigProvider().getFetchSyncableDoctypes().includes(doctype);
 }
 
 function getDocTypeName(doc: DocValueMap | Doc): string {
