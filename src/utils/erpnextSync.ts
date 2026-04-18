@@ -723,6 +723,10 @@ export async function performInitialFullSync(fyo: Fyo) {
           } else {
             await createNewDocument(fyo, doc, baseURL, token, deviceID);
           }
+          if (fyo.store.isDevelopment) {
+            // eslint-disable-next-line no-console
+            console.log(`Processed document ${docName} (${docType})`);
+          }
         } catch (error) {
           const errorMsg =
             error instanceof Error ? error.message : String(error);
@@ -742,10 +746,28 @@ export async function performInitialFullSync(fyo: Fyo) {
               (doc.erpnextDocName as string) || (doc.name as string),
             payloadFromERPNext: doc,
           });
-          throw new Error(fullErrorMsg);
+          if (fyo.store.isDevelopment) {
+            // eslint-disable-next-line no-console
+            console.error(fullErrorMsg);
+          }
+          continue;
         }
       }
     }
+  }
+
+  if (failedDocs.length > 0) {
+    const maxToShow = 5;
+    const shown = failedDocs.slice(0, maxToShow);
+    const remaining = failedDocs.length - shown.length;
+    const suffix =
+      remaining > 0 ? `\n... and ${remaining} more (see Integration Error Log)` : '';
+
+    // Do not mark initialSyncData=true: user should be able to retry after
+    // fixing upstream ERPNext data issues.
+    throw new Error(
+      `Initial full sync finished with errors.\n\n${shown.join('\n')}${suffix}`
+    );
   }
 
   const syncSettingsDoc = (await fyo.doc.getDoc(
