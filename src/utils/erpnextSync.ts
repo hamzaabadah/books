@@ -478,7 +478,12 @@ async function performPreSync(fyo: Fyo, doc: DocValueMap) {
   const provider = getSyncConfigProvider();
   if (provider.preSync) {
     await provider.preSync(fyo, doc, { addToFetchFromERPNextQueue });
-    return;
+    // Extended preSync already queues missing Items for StockMovement; built-in has the same loop —
+    // skip it to avoid duplicate FetchFromERPNextQueue rows. Other extended doctypes hit `default`
+    // in the switch below (no duplicate work).
+    if (doc.doctype === ModelNameEnum.StockMovement) {
+      return;
+    }
   }
 
   const initialSyncData =
