@@ -18,12 +18,24 @@ export default () => {
     host = process.env.VITE_HOST;
   }
 
+  const booksRepoRoot = path.resolve(__dirname);
+  const syncExtendedRepo = path.resolve(__dirname, '../books-erpnext-sync-extended');
+  const syncExtendedSrc = path.join(syncExtendedRepo, 'src', 'index.ts');
+
   return defineConfig({
-    server: { host, port, strictPort: true },
+    server: {
+      host,
+      port,
+      strictPort: true,
+      fs: {
+        allow: [booksRepoRoot, syncExtendedRepo],
+      },
+    },
     root: path.resolve(__dirname, './src'),
     plugins: [vue()],
     resolve: {
       alias: {
+        'books-erpnext-sync-extended': syncExtendedSrc,
         vue: 'vue/dist/vue.esm-bundler.js',
         fyo: path.resolve(__dirname, './fyo'),
         src: path.resolve(__dirname, './src'),

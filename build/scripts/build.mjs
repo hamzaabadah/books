@@ -34,7 +34,6 @@ if (argv.nosign) {
   process.env['CSC_IDENTITY_AUTO_DISCOVERY'] = false;
 }
 
-await buildERPNextSyncExtendedIfPresent();
 updatePaths();
 await buildMainProcessSource();
 await buildRendererProcessSource();
@@ -42,21 +41,6 @@ copyPackageJson();
 
 if (!argv.nopackage) {
   await packageApp();
-}
-
-async function buildERPNextSyncExtendedIfPresent() {
-  const extRoot = path.join(root, '..', 'books-erpnext-sync-extended');
-  if (!fs.existsSync(extRoot)) {
-    return;
-  }
-
-  const pkgPath = path.join(extRoot, 'package.json');
-  if (!fs.existsSync(pkgPath)) {
-    return;
-  }
-
-  // Ensure dist/ reflects latest src/ before packaging the app that imports it.
-  await $$({ cwd: extRoot })`yarn build`;
 }
 
 function updatePaths() {
@@ -83,6 +67,13 @@ async function buildMainProcessSource() {
 async function buildRendererProcessSource() {
   const base = 'app://';
   const outDir = path.join(buildDirPath, 'src');
+  const syncExtendedSrc = path.join(
+    root,
+    '..',
+    'books-erpnext-sync-extended',
+    'src',
+    'index.ts'
+  );
   await vite.build({
     base: `/${base}`,
     root: path.join(root, 'src'),
@@ -90,6 +81,7 @@ async function buildRendererProcessSource() {
     plugins: [vue()],
     resolve: {
       alias: {
+        'books-erpnext-sync-extended': syncExtendedSrc,
         vue: 'vue/dist/vue.esm-bundler.js',
         fyo: path.join(root, 'fyo'),
         src: path.join(root, 'src'),
