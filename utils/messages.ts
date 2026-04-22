@@ -36,6 +36,11 @@ export enum IPC_ACTIONS {
   DELETE_FILE = 'delete-file',
   GET_DB_DEFAULT_PATH = 'get-db-default-path',
   SEND_API_REQUEST = 'send-api-request',
+  // Subscription messages
+  VERIFY_SUBSCRIPTION = 'verify-subscription',
+  GET_STORED_TOKEN = 'get-stored-token',
+  CLEAR_SUB_TOKEN = 'clear-sub-token',
+  SYNC_DB_NOW = 'sync-db-now',
   // Database messages
   DB_CREATE = 'db-create',
   DB_CONNECT = 'db-connect',
