@@ -210,6 +210,33 @@ const ipc = {
     >;
   },
 
+  async verifySubscription(token: string) {
+    return (await ipcRenderer.invoke(
+      IPC_ACTIONS.VERIFY_SUBSCRIPTION,
+      token
+    )) as { valid: boolean; email: string; message: string };
+  },
+
+  async getStoredToken() {
+    return (await ipcRenderer.invoke(IPC_ACTIONS.GET_STORED_TOKEN)) as {
+      token: string | null;
+      valid: boolean;
+      email: string;
+      withinGrace: boolean;
+    };
+  },
+
+  async clearSubscriptionToken() {
+    await ipcRenderer.invoke(IPC_ACTIONS.CLEAR_SUB_TOKEN);
+  },
+
+  async syncDbNow() {
+    return (await ipcRenderer.invoke(IPC_ACTIONS.SYNC_DB_NOW)) as {
+      success: boolean;
+      message: string;
+    };
+  },
+
   registerMainProcessErrorListener(listener: IPCRendererListener) {
     ipcRenderer.on(IPC_CHANNELS.LOG_MAIN_PROCESS_ERROR, listener);
   },
