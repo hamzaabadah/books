@@ -3,7 +3,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import main from 'main';
 import config from 'utils/config';
-import { retrieveToken, syncDatabaseToServer } from './subscription';
+import { retrieveToken, syncDatabaseToServer, isWithinGracePeriod } from './subscription';
 import { emitMainProcessError } from 'backend/helpers';
 
 let bree: Bree;
@@ -66,6 +66,10 @@ export async function initScheduler(interval: string) {
         if (msg.type === 'trigger-erpnext-sync') {
           main.mainWindow?.webContents.send('trigger-erpnext-sync');
         } else if (msg.type === 'trigger-database-sync') {
+          if (!isWithinGracePeriod()) {
+            console.log('[Sync] Skipping scheduled database sync (not within grace period or no valid token)');
+            return;
+          }
           const token = retrieveToken();
           const dbPath = config.get('lastSelectedFilePath');
           if (token && typeof dbPath === 'string') {
