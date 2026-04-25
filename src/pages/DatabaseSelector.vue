@@ -36,6 +36,7 @@
       <!-- New File (Blue Icon) -->
       <div
         data-testid="create-new-file"
+        v-if="filesLoaded && !files?.length"
         class="px-4 h-row-largest flex flex-row items-center gap-4 p-2"
         :class="
           creatingDemo
@@ -63,7 +64,7 @@
 
       <!-- From ERPNext Company (Purple Icon) -->
       <div
-        v-if="erpnextImportAvailable"
+        v-if="false"
         data-testid="create-from-erpnext-company"
         class="px-4 h-row-largest flex flex-row items-center gap-4 p-2"
         :class="
@@ -105,6 +106,7 @@
 
       <!-- Existing File (Green Icon) -->
       <div
+        v-if="false"
         class="px-4 h-row-largest flex flex-row items-center gap-4 p-2"
         :class="
           creatingDemo
@@ -141,7 +143,7 @@
 
       <!-- Create Demo (Pink Icon) -->
       <div
-        v-if="!files?.length"
+        v-if="false"
         class="px-4 h-row-largest flex flex-row items-center gap-4 p-2"
         :class="
           creatingDemo
@@ -175,7 +177,11 @@
       <hr class="dark:border-gray-800" />
 
       <!-- File List -->
-      <div class="overflow-y-auto" style="max-height: 340px">
+      <div
+        v-if="filesLoaded && files?.length"
+        class="overflow-y-auto"
+        style="max-height: 340px"
+      >
         <div
           v-for="(file, i) in files"
           :key="file.dbPath"
@@ -253,7 +259,7 @@
           </button>
         </div>
       </div>
-      <hr v-if="files?.length" class="dark:border-gray-800" />
+      <hr v-if="filesLoaded && files?.length" class="dark:border-gray-800" />
 
       <!-- Language Selector -->
       <div
@@ -271,7 +277,7 @@
       >
         <LanguageSelector v-show="!creatingDemo" class="text-sm w-28" />
         <button
-          v-if="files?.length"
+          v-if="false"
           class="
             text-sm
             bg-gray-100
@@ -669,6 +675,7 @@ export default defineComponent({
       creationPercent: 0,
       creatingDemo: false,
       loadingDatabase: false,
+      filesLoaded: false,
       files: [],
       openERPNextCompanyPickerModal: false,
       erpnextCompaniesList: [] as ERPNextCompanyPickerRow[],
@@ -687,6 +694,7 @@ export default defineComponent({
       creationPercent: number;
       creatingDemo: boolean;
       loadingDatabase: boolean;
+      filesLoaded: boolean;
       files: ConfigFilesWithModified[];
       openERPNextCompanyPickerModal: boolean;
       erpnextCompaniesList: ERPNextCompanyPickerRow[];
@@ -814,10 +822,14 @@ export default defineComponent({
       this.$emit('file-selected', filePath);
     },
     async setFiles() {
-      const dbList = await ipc.getDbList();
-      this.files = dbList?.sort(
-        (a, b) => Date.parse(b.modified) - Date.parse(a.modified)
-      );
+      try {
+        const dbList = await ipc.getDbList();
+        this.files =
+          dbList?.sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified)) ??
+          [];
+      } finally {
+        this.filesLoaded = true;
+      }
     },
     newDatabase() {
       if (this.creatingDemo) {
