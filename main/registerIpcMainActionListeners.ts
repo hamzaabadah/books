@@ -276,6 +276,8 @@ export default function registerIpcMainActionListeners(main: Main) {
     if (result.valid) {
       storeToken(token);
       setLastVerifiedAt();
+    } else {
+      clearToken();
     }
     return result;
   });
@@ -292,6 +294,8 @@ export default function registerIpcMainActionListeners(main: Main) {
       .then((result) => {
         if (result.valid) {
           setLastVerifiedAt();
+        } else {
+          clearToken();
         }
         return result;
       })
