@@ -1,6 +1,6 @@
 {
   "name": "rukn-books",
-  "version": "0.42.0",
+  "version": "0.42.2",
   "description": "Simple book-keeping app for everyone",
   "author": {
     "name": "Rukn Software",
@@ -33,7 +33,7 @@
     "lodash": "^4.17.23",
     "luxon": "^2.5.2",
     "node-fetch": "2",
-    "p-retry": "^7.1.0",
+    "p-retry": "^6.2.1",
     "pesa": "^1.1.12",
     "source-map-support": "^0.5.21",
     "vue": "^3.2.40",

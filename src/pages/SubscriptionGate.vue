@@ -13,6 +13,7 @@
         bg-white
         dark:bg-gray-875
         p-8
+        window-no-drag
       "
       style="max-width: 440px"
     >
