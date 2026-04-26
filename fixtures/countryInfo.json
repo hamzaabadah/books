@@ -1579,7 +1579,14 @@
     "timezones": ["Pacific/Palau"]
   },
   "Palestinian Territory, Occupied": {
-    "code": "ps"
+    "code": "ps",
+    "currency": "ILS",
+    "currency_fraction": "Agora",
+    "currency_fraction_units": 100,
+    "currency_name": "New Israeli Sheqel",
+    "currency_symbol": "₪",
+    "timezones": ["Asia/Hebron", "Asia/Gaza"],
+    "locale": "ar-SA"
   },
   "Panama": {
     "code": "pa",
