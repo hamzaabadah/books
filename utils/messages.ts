@@ -54,6 +54,7 @@ export enum IPC_CHANNELS {
   TRIGGER_ERPNEXT_SYNC = 'trigger-erpnext-sync',
   LOG_MAIN_PROCESS_ERROR = 'main-process-error',
   CONSOLE_LOG = 'console-log',
+  NEED_SUBSCRIPTION = 'need-subscription',
 }
 
 export enum DB_CONN_FAILURE {

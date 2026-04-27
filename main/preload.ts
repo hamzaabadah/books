@@ -248,6 +248,13 @@ const ipc = {
     ipcRenderer.on(IPC_CHANNELS.CONSOLE_LOG, listener);
   },
 
+  registerNeedSubscriptionListener(listener: IPCRendererListener) {
+    ipcRenderer.on(IPC_CHANNELS.NEED_SUBSCRIPTION, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.NEED_SUBSCRIPTION, listener);
+    };
+  },
+
   db: {
     async getSchema() {
       return (await ipcRenderer.invoke(

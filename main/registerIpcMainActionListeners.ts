@@ -15,7 +15,7 @@ import databaseManager from 'backend/database/manager';
 import { emitMainProcessError } from 'backend/helpers';
 import { Main } from 'main';
 import { DatabaseMethod } from 'utils/db/types';
-import { IPC_ACTIONS } from 'utils/messages';
+import { IPC_ACTIONS, IPC_CHANNELS } from 'utils/messages';
 import { getUrlAndTokenString, sendError } from './contactMothership';
 import { getLanguageMap } from './getLanguageMap';
 import { getTemplates } from './getPrintTemplates';
@@ -276,8 +276,16 @@ export default function registerIpcMainActionListeners(main: Main) {
     if (result.valid) {
       storeToken(token);
       setLastVerifiedAt();
+      main.mainWindow?.webContents.send(
+        IPC_CHANNELS.NEED_SUBSCRIPTION,
+        false
+      );
     } else {
       clearToken();
+      main.mainWindow?.webContents.send(
+        IPC_CHANNELS.NEED_SUBSCRIPTION,
+        true
+      );
     }
     return result;
   });
@@ -294,12 +302,25 @@ export default function registerIpcMainActionListeners(main: Main) {
       .then((result) => {
         if (result.valid) {
           setLastVerifiedAt();
+          main.mainWindow?.webContents.send(
+            IPC_CHANNELS.NEED_SUBSCRIPTION,
+            false
+          );
         } else {
           clearToken();
+          main.mainWindow?.webContents.send(
+            IPC_CHANNELS.NEED_SUBSCRIPTION,
+            true
+          );
         }
         return result;
       })
-      .catch(() => null);
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[Subscription] Token verification failed', err);
+        emitMainProcessError(err);
+        return null;
+      });
 
     if (withinGrace) {
       return { valid: false, email: '', withinGrace: true };

@@ -126,11 +126,16 @@ export default defineComponent({
   data() {
     return {
       activeScreen: null,
+      /** Mirrored from main via `IPC_CHANNELS.NEED_SUBSCRIPTION` */
+      needSubscription: false,
+      unsubscribeNeedSubscription: null,
       dbPath: '',
       companyName: '',
       darkMode: false,
     } as {
       activeScreen: null | Screen;
+      needSubscription: boolean;
+      unsubscribeNeedSubscription: null | (() => void);
       dbPath: string;
       companyName: string;
       darkMode: boolean | undefined;
@@ -145,11 +150,33 @@ export default defineComponent({
     language(value: string) {
       this.languageDirection = getLanguageDirection(value);
     },
+    activeScreen: {
+      immediate: true,
+      handler(value: null | Screen) {
+        if (this.needSubscription && value !== Screen.SubscriptionGate) {
+          this.activeScreen = Screen.SubscriptionGate;
+        }
+      },
+    },
+  },
+  beforeUnmount() {
+    this.unsubscribeNeedSubscription?.();
+    this.unsubscribeNeedSubscription = null;
   },
   async mounted() {
+    this.unsubscribeNeedSubscription = ipc.registerNeedSubscriptionListener(
+      (_, needSubscription: boolean) => {
+        this.needSubscription = needSubscription;
+        if (needSubscription) {
+          this.activeScreen = Screen.SubscriptionGate;
+        }
+      }
+    );
+
     // Mirror subscription feature-flags from Electron store into fyo.config,
     // so model-layer `hidden` functions can access them.
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- preload `ipc` is global
       const features = (ipc as any)?.store?.get?.('subscriptionFeatures');
       if (features && typeof features === 'object') {
         fyo.config.set(
