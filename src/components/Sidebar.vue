@@ -174,7 +174,7 @@
           gap-1
           items-center
         "
-        @click="() => reportIssue()"
+        @click="openReportIssueModal"
       >
         <feather-icon name="flag" class="h-4 w-4 flex-shrink-0" />
         <p>
@@ -215,10 +215,88 @@
     <Modal :open-modal="viewShortcuts" @closemodal="viewShortcuts = false">
       <ShortcutsHelper class="w-form" />
     </Modal>
+
+    <Modal
+      :open-modal="showReportIssue"
+      @closemodal="() => (showReportIssue = false)"
+    >
+      <div class="p-4 text-gray-900 dark:text-gray-100 w-form">
+        <h2 class="text-xl font-semibold select-none">
+          {{ t`Report Issue` }}
+        </h2>
+
+        <p class="text-sm mt-1 text-gray-600 dark:text-gray-400">
+          {{ t`Tell us what happened and how to reproduce it.` }}
+        </p>
+
+        <div class="mt-6 flex flex-col gap-4 text-base">
+          <div class="flex flex-col gap-2">
+            <label class="text-gray-600 dark:text-gray-400">{{
+            t`Title`
+          }}</label>
+          <input
+            v-model="reportIssueTitle"
+            type="text"
+            class="
+              bg-gray-100
+              dark:bg-gray-875
+              focus:bg-gray-200
+              dark:focus:bg-gray-890
+              rounded-md
+              px-3
+              py-2
+              outline-none
+            "
+            :placeholder="t`Short summary`"
+            :disabled="isReportingIssue"
+          />
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-gray-600 dark:text-gray-400">{{
+            t`Description`
+          }}</label>
+          <textarea
+            v-model="reportIssueDescription"
+            rows="6"
+            class="
+              bg-gray-100
+              dark:bg-gray-875
+              focus:bg-gray-200
+              dark:focus:bg-gray-890
+              rounded-md
+              px-3
+              py-2
+              outline-none
+              resize-y
+            "
+            :placeholder="t`Explain what happened and steps to reproduce`"
+            :disabled="isReportingIssue"
+          />
+          </div>
+        </div>
+
+        <div class="flex justify-between mt-8">
+          <Button
+            :disabled="isReportingIssue"
+            @click="() => (showReportIssue = false)"
+          >
+            {{ t`Cancel` }}
+          </Button>
+          <Button
+            type="primary"
+            :disabled="isReportingIssue"
+            @click="submitReportIssue"
+          >
+            {{ isReportingIssue ? t`Sending...` : t`Send` }}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 <script lang="ts">
-import { reportIssue } from 'src/errorHandling';
+import { getFeatureFlags, reportIssue } from 'src/errorHandling';
 import { fyo } from 'src/initFyo';
 import { languageDirectionKey, shortcutsKey } from 'src/utils/injectionKeys';
 import { getSidebarConfig } from 'src/utils/sidebarConfig';
@@ -227,6 +305,7 @@ import { routeTo, toggleSidebar } from 'src/utils/ui';
 import { showToast } from 'src/utils/interactive';
 import { defineComponent, inject } from 'vue';
 import router from '../router';
+import Button from './Button.vue';
 import Icon from './Icon.vue';
 import Modal from './Modal.vue';
 import ShortcutsHelper from './ShortcutsHelper.vue';
@@ -235,6 +314,7 @@ const COMPONENT_NAME = 'Sidebar';
 
 export default defineComponent({
   components: {
+    Button,
     Icon,
     Modal,
     ShortcutsHelper,
@@ -249,21 +329,29 @@ export default defineComponent({
       shortcuts: inject(shortcutsKey),
     };
   },
-  data() {
+  data(): {
+    companyName: string;
+    groups: SidebarConfig;
+    viewShortcuts: boolean;
+    activeGroup: null | SidebarRoot;
+    showDevMode: boolean;
+    isSyncing: boolean;
+    showReportIssue: boolean;
+    reportIssueTitle: string;
+    reportIssueDescription: string;
+    isReportingIssue: boolean;
+  } {
     return {
       companyName: '',
       groups: [],
       viewShortcuts: false,
       activeGroup: null,
-      showDevMode: false,
+      showDevMode: fyo.store.isDevelopment,
       isSyncing: false,
-    } as {
-      companyName: string;
-      groups: SidebarConfig;
-      viewShortcuts: boolean;
-      activeGroup: null | SidebarRoot;
-      showDevMode: boolean;
-      isSyncing: boolean;
+      showReportIssue: false,
+      reportIssueTitle: '',
+      reportIssueDescription: '',
+      isReportingIssue: false,
     };
   },
   computed: {
@@ -287,7 +375,7 @@ export default defineComponent({
       }
     });
 
-    this.showDevMode = this.fyo.store.isDevelopment;
+    this.showDevMode = fyo.store.isDevelopment;
   },
   unmounted() {
     this.shortcuts?.delete(COMPONENT_NAME);
@@ -296,6 +384,69 @@ export default defineComponent({
     routeTo,
     reportIssue,
     toggleSidebar,
+    openReportIssueModal() {
+      this.reportIssueTitle = '';
+      this.reportIssueDescription = '';
+      this.showReportIssue = true;
+    },
+    async submitReportIssue() {
+      const title = this.reportIssueTitle?.trim();
+      const description = this.reportIssueDescription?.trim();
+
+      if (!title || !description) {
+        showToast({
+          message: this.t`Please fill title and description.`,
+          type: 'error',
+        });
+        return;
+      }
+
+      if (this.isReportingIssue) return;
+      this.isReportingIssue = true;
+
+      try {
+        let logs =
+          `Path: ${router.currentRoute.value.fullPath}\n` +
+          `Version: ${fyo.store.appVersion}\n` +
+          `Platform: ${fyo.store.platform}\n` +
+          `Language: ${fyo.config.get('language') ?? '-'}\n` +
+          `Country: ${fyo.singles.SystemSettings?.countryCode ?? '-'}\n`;
+
+        const flags = getFeatureFlags();
+        if (flags.length) {
+          logs += `\n${flags.join('\n')}\n`;
+        }
+        const res = await ipc.reportIssue({
+          title,
+          description,
+          instance_id: fyo.store.instanceId,
+          app_version: fyo.store.appVersion,
+          platform: fyo.store.platform,
+          logs,
+        });
+
+        if (res.success) {
+          showToast({
+            message: this.t`Issue sent successfully.`,
+            type: 'success',
+          });
+          this.showReportIssue = false;
+          return;
+        }
+
+        showToast({
+          message: res.message || this.t`Failed to send issue.`,
+          type: 'error',
+        });
+      } catch (err) {
+        showToast({
+          message: this.t`Connection failed.`,
+          type: 'error',
+        });
+      } finally {
+        this.isReportingIssue = false;
+      }
+    },
     setActiveGroup() {
       const { fullPath } = this.$router.currentRoute.value;
       const fallBackGroup = this.activeGroup;

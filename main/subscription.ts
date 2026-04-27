@@ -346,3 +346,47 @@ export async function syncDatabaseToServer(
     isSyncing = false;
   }
 }
+
+export async function reportIssueToServer(
+  token: string,
+  payload: {
+    title: string;
+    description: string;
+    instance_id?: string;
+    instance_name?: string;
+    app_version?: string;
+    platform?: string;
+    logs?: string;
+  }
+): Promise<{ success: boolean; message: string; name?: string }> {
+  try {
+    const res = await fetch(
+      `${SUBSCRIPTION_SERVER}/api/method/rukn_books_subscription.api.report_issue`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (res.status === 200) {
+      const body = (await res.json()) as { message?: unknown };
+      const msg = body?.message;
+      if (msg && typeof msg === 'object') {
+        const m = msg as Record<string, unknown>;
+        const name = typeof m.name === 'string' ? m.name : undefined;
+        return { success: true, message: 'OK', name };
+      }
+      return { success: true, message: 'OK' };
+    }
+
+    const serverMsg = await getErrorMessageFromResponse(res);
+    return { success: false, message: serverMsg || `Server returned ${res.status}` };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, message: `Connection error: ${msg}` };
+  }
+}

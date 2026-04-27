@@ -37,6 +37,7 @@ import verifyTokenWithServer, {
   setLastVerifiedAt,
   isWithinGracePeriod,
   syncDatabaseToServer,
+  reportIssueToServer,
 } from './subscription';
 
 export default function registerIpcMainActionListeners(main: Main) {
@@ -355,6 +356,28 @@ export default function registerIpcMainActionListeners(main: Main) {
     }
     return await syncDatabaseToServer(backupPath, token);
   });
+
+  ipcMain.handle(
+    IPC_ACTIONS.REPORT_ISSUE,
+    async (
+      _,
+      payload: {
+        title: string;
+        description: string;
+        instance_id?: string;
+        instance_name?: string;
+        app_version?: string;
+        platform?: string;
+        logs?: string;
+      }
+    ) => {
+      const token = retrieveToken();
+      if (!token) {
+        return { success: false, message: 'No subscription token available' };
+      }
+      return await reportIssueToServer(token, payload);
+    }
+  );
 
   /**
    * Database Related Actions

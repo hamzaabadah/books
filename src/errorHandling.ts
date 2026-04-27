@@ -193,7 +193,7 @@ export function getErrorHandledSync<T extends (...args: any[]) => any>(
   };
 }
 
-function getFeatureFlags(): string[] {
+export function getFeatureFlags(): string[] {
   const getBooleanFields = (docName: string) => {
     const doc = fyo.singles[docName];
 
@@ -245,45 +245,88 @@ function getFeatureFlags(): string[] {
     : [];
 }
 
-function getIssueUrlQuery(errorLogObj?: ErrorLog): string {
-  const baseUrl = 'https://github.com/ruknsoftware/books/issues/new?labels=bug';
-
-  const body = [
-    '<h2>Description</h2>',
-    'Add some description...',
-    '',
-    '<h2>Steps to Reproduce</h2>',
-    'Add steps to reproduce the error...',
-    '',
-    '<h2>Info</h2>',
-    '',
-  ];
+function buildIssueReportBody(errorLogObj?: ErrorLog): string {
+  const body: string[] = [];
 
   if (errorLogObj) {
-    body.push(`**Error**: _${errorLogObj.name}: ${errorLogObj.message}_`, '');
+    body.push(`Error: ${errorLogObj.name}: ${errorLogObj.message}`, '');
+  } else {
+    body.push(t`User report`, '');
   }
 
   if (errorLogObj?.stack) {
-    body.push('**Stack**:', '```', errorLogObj.stack, '```', '');
+    body.push('Stack:', errorLogObj.stack, '');
   }
 
-  body.push(`**Version**: \`${fyo.store.appVersion}\``);
-  body.push(`**Platform**: \`${fyo.store.platform}\``);
-  body.push(`**Path**: \`${router.currentRoute.value.fullPath}\``);
-
-  body.push(`**Language**: \`${fyo.config.get('language') ?? '-'}\``);
+  body.push(`Version: ${fyo.store.appVersion}`);
+  body.push(`Platform: ${fyo.store.platform}`);
+  body.push(`Path: ${router.currentRoute.value.fullPath}`);
+  body.push(`Language: ${fyo.config.get('language') ?? '-'}`);
   if (fyo.singles.SystemSettings?.countryCode) {
-    body.push(`**Country**: \`${fyo.singles.SystemSettings.countryCode}\``);
+    body.push(`Country: ${fyo.singles.SystemSettings.countryCode}`);
   }
-  body.push('', ...getFeatureFlags());
 
-  const encodedBody = encodeURIComponent(body.join('\n'));
-  return `${baseUrl}&body=${encodedBody}`;
+  const flags = getFeatureFlags();
+  if (flags.length) {
+    body.push('', ...flags);
+  }
+
+  return body.join('\n');
 }
 
-export function reportIssue(errorLogObj?: ErrorLog) {
-  const urlQuery = getIssueUrlQuery(errorLogObj);
-  ipc.openExternalUrl(urlQuery);
+export async function reportIssue(errorLogObj?: ErrorLog) {
+  const title = errorLogObj
+    ? `${errorLogObj.name}: ${truncate(errorLogObj.message ?? '', { length: 80 })}`
+    : t`Report Issue`;
+
+  const logs = buildIssueReportBody(errorLogObj);
+
+  const detail = t`This will send the issue report to your subscription server.`;
+  const confirmed = await showDialog({
+    type: 'info',
+    title: t`Report Issue`,
+    detail,
+    buttons: [
+      {
+        label: t`Send`,
+        isPrimary: true,
+        action: () => true,
+      },
+      {
+        label: t`Cancel`,
+        isEscape: true,
+        action: () => false,
+      },
+    ],
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  const res = await ipc.reportIssue({
+    title: String(title),
+    description: errorLogObj?.message
+      ? String(errorLogObj.message)
+      : t`User report`,
+    instance_id: fyo.store.instanceId,
+    app_version: fyo.store.appVersion,
+    platform: fyo.store.platform,
+    logs,
+  });
+
+  if (res.success) {
+    const msg = res.name ? `${t`Sent`}: ${res.name}` : t`Sent`;
+    const { showToast } = await import('src/utils/interactive');
+    showToast({ message: msg, type: 'success' });
+    return;
+  }
+
+  await showDialog({
+    type: 'error',
+    title: t`Failed to send`,
+    detail: res.message || t`Connection failed.`,
+  });
 }
 
 function getErrorLabel(error: Error) {

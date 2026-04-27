@@ -41,6 +41,7 @@ export enum IPC_ACTIONS {
   GET_STORED_TOKEN = 'get-stored-token',
   CLEAR_SUB_TOKEN = 'clear-sub-token',
   SYNC_DB_NOW = 'sync-db-now',
+  REPORT_ISSUE = 'report-issue',
   // Database messages
   DB_CREATE = 'db-create',
   DB_CONNECT = 'db-connect',

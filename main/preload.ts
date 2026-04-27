@@ -236,6 +236,22 @@ const ipc = {
     };
   },
 
+  async reportIssue(payload: {
+    title: string;
+    description: string;
+    instance_id?: string;
+    instance_name?: string;
+    app_version?: string;
+    platform?: string;
+    logs?: string;
+  }) {
+    return (await ipcRenderer.invoke(IPC_ACTIONS.REPORT_ISSUE, payload)) as {
+      success: boolean;
+      message: string;
+      name?: string;
+    };
+  },
+
   registerMainProcessErrorListener(listener: IPCRendererListener) {
     ipcRenderer.on(IPC_CHANNELS.LOG_MAIN_PROCESS_ERROR, listener);
   },
