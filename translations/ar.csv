@@ -1110,7 +1110,7 @@
 "Auth Token","رمز المصادقة",
 "Available Loyalty Points","نقاط الولاء المتاحة",
 "Barcode ${0} has an invalid length.","يحتوي الرمز الشريطي ${0} على طول غير صالح.",
-"Barcode must be exactly 12 digits.","يجب أن يتكون الباركود من 12 رقمًا بالضبط.",
+"Barcode must be 8 to 14 digits.","يجب أن يتكون الباركود من 8 إلى 14 رقمًا.",
 "Batch ${0} does not belong to Item ${1}","الدفعة ${0} لا تنتمي إلى العنصر ${1}",
 "Billion","مليار",
 "Can Change Discount","يمكن تغيير الخصم",
