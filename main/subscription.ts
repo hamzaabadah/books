@@ -86,7 +86,8 @@ async function verifyTokenWithServer(token: string): Promise<{
         instanceId
       )}`,
       {
-        method: 'GET',
+        // Use POST since the server updates `last_seen` and may be rolled back on GET.
+        method: 'POST',
         headers: {
           Authorization: `token ${token}`,
         },
