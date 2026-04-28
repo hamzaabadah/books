@@ -18,7 +18,7 @@
     :title="df?.label"
     :style="imageSizeStyle"
   >
-    <img v-if="value" :src="value" />
+    <img v-if="src" :src="src" />
     <div v-else :class="[!isReadOnly ? 'group-hover:opacity-90' : '']">
       <div
         v-if="letterPlaceholder"
@@ -70,6 +70,11 @@
 <script lang="ts">
 import { Field } from 'schemas/types';
 import { fyo } from 'src/initFyo';
+import {
+  isAttachImageFileRef,
+  getAttachImageFileRefPath,
+  resolveAttachImageSrc,
+} from 'src/utils/attachments';
 import { getDataURL } from 'src/utils/misc';
 import { defineComponent, PropType } from 'vue';
 import FeatherIcon from '../FeatherIcon.vue';
@@ -83,14 +88,25 @@ const mime_types: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
+function inferImageMimeTypeFromName(name?: string | null) {
+  const n = (name ?? '').toString();
+  const ext = n.split('.').pop()?.toLowerCase() ?? '';
+  return mime_types[ext] || 'application/octet-stream';
+}
+
 export default defineComponent({
   name: 'AttachImage',
   components: { FeatherIcon },
   extends: Base,
   props: {
     letterPlaceholder: { type: String, default: '' },
-    value: { type: String, default: '' },
+    value: { type: [String, Object] as PropType<any>, default: '' },
     df: { type: Object as PropType<Field> },
+  },
+  data() {
+    return {
+      src: '' as string,
+    };
   },
   computed: {
     imageSizeStyle() {
@@ -103,7 +119,35 @@ export default defineComponent({
       return !!this.value;
     },
   },
+  watch: {
+    value: {
+      immediate: true,
+      handler() {
+        void this.refreshSrc();
+      },
+    },
+  },
   methods: {
+    async refreshSrc() {
+      if (this.value && typeof this.value === 'object' && this.value.data) {
+        const mimeType =
+          typeof this.value.type === 'string' && this.value.type.length
+            ? this.value.type
+            : inferImageMimeTypeFromName(this.value.name);
+        this.src = await getDataURL(mimeType, this.value.data);
+        return;
+      }
+      if (typeof this.value !== 'string') {
+        this.src = '';
+        return;
+      }
+
+      const typeHint = isAttachImageFileRef(this.value)
+        ? inferImageMimeTypeFromName(getAttachImageFileRefPath(this.value))
+        : undefined;
+      const resolved = await resolveAttachImageSrc(this.value, fyo, typeHint);
+      this.src = resolved ?? '';
+    },
     async handleClick() {
       if (this.value) {
         return await this.clearImage();
@@ -113,6 +157,7 @@ export default defineComponent({
     async clearImage() {
       // @ts-ignore
       this.triggerChange(null);
+      this.src = '';
     },
     async selectImage() {
       if (this.isReadOnly) {
@@ -128,12 +173,13 @@ export default defineComponent({
       if (!success) {
         return;
       }
-      const extension = name.split('.').at(-1);
-      const type = mime_types[extension];
-      const dataURL = await getDataURL(type, data);
-
+      const extension = (name.split('.').at(-1) || 'png').toLowerCase();
+      const type = mime_types[extension] || inferImageMimeTypeFromName(name);
+      // Persisting to filesystem vs DB is handled at Doc.set() level.
       // @ts-ignore
-      this.triggerChange(dataURL);
+      this.triggerChange({ name, type, data });
+      await this.$nextTick();
+      await this.refreshSrc();
     },
   },
 });
