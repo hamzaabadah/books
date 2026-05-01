@@ -57,7 +57,13 @@ export default defineComponent({
     value: { type: String as PropType<PeriodKey>, default: 'This Year' },
     options: {
       type: Array as PropType<PeriodKey[]>,
-      default: () => ['This Year', 'This Quarter', 'This Month', 'YTD'],
+      default: () => [
+        ' ',
+        'This Year',
+        'This Quarter',
+        'This Month',
+        'YTD',
+      ],
     },
   },
   emits: ['change'],

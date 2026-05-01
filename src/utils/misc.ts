@@ -19,7 +19,7 @@ export function getDatesAndPeriodList(period: PeriodKey): {
   fromDate: DateTime;
   toDate: DateTime;
 } {
-  const toDate: DateTime = DateTime.now().plus({ days: 1 });
+  const toDate: DateTime = DateTime.now().endOf('day');
   let fromDate: DateTime;
 
   if (period === 'This Year') {
@@ -30,6 +30,8 @@ export function getDatesAndPeriodList(period: PeriodKey): {
     fromDate = toDate.minus({ months: 3 });
   } else if (period === 'This Month') {
     fromDate = toDate.startOf('month');
+  } else if (period === 'Today') {
+    fromDate = DateTime.now().startOf('day');
   } else {
     fromDate = toDate.minus({ days: 1 });
   }
@@ -50,7 +52,10 @@ export function getDatesAndPeriodList(period: PeriodKey): {
 
     periodList.unshift(nextDate);
   }
-  periodList.shift();
+
+  if (period !== 'This Month' && period !== 'Today') {
+    periodList.shift();
+  }
 
   return {
     periodList,
