@@ -30,6 +30,8 @@ export function getDatesAndPeriodList(period: PeriodKey): {
     fromDate = toDate.minus({ months: 3 });
   } else if (period === 'This Month') {
     fromDate = toDate.startOf('month');
+  } else if (period === 'Today') {
+    fromDate = DateTime.now().startOf('day');
   } else {
     fromDate = toDate.minus({ days: 1 });
   }
