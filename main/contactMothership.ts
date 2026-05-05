@@ -39,6 +39,10 @@ export function getUrlAndTokenString(): Creds {
     return empty;
   }
 
+  if (!apiKey || !apiSecret || !errorLogUrl || !telemetryUrl) {
+    return empty;
+  }
+
   return {
     errorLogUrl: encodeURI(errorLogUrl),
     telemetryUrl: encodeURI(telemetryUrl),
