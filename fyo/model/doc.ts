@@ -17,6 +17,7 @@ import { getIsNullOrUndef, getMapFromList, getRandomString } from 'utils';
 import { markRaw, reactive } from 'vue';
 import { isPesa } from '../utils/index';
 import { getDbSyncError } from './errorHelpers';
+import { DocAttachmentManager } from './DocAttachmentManager';
 import {
   areDocValuesEqual,
   getFormulaSequence,
@@ -56,35 +57,6 @@ const DUPLICATE_STRIP_FIELDS = ['isSyncedWithErp', 'datafromErp'] as const;
 
 const ATTACH_IMAGE_FILE_REF_PREFIX = 'books-file:';
 
-function uint8ArrayToBase64(bytes: Uint8Array) {
-  try {
-    // Browser/Electron renderer
-    // eslint-disable-next-line no-undef
-    if (typeof btoa === 'function') {
-      let binary = '';
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-      }
-      // eslint-disable-next-line no-undef
-      return btoa(binary);
-    }
-  } catch {}
-
-  // Fallback (Node-like)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const B = (globalThis as any)?.Buffer;
-  if (B) {
-    return B.from(bytes).toString('base64');
-  }
-  return '';
-}
-
-function dataUrlFromBytes(type: string, bytes: Uint8Array) {
-  const base64 = uint8ArrayToBase64(bytes);
-  return `data:${type || 'application/octet-stream'};base64,${base64}`;
-}
-
 export class Doc extends Observable<DocValue | Doc[]> {
   /* eslint-disable @typescript-eslint/no-floating-promises */
   name?: string;
@@ -108,13 +80,7 @@ export class Doc extends Observable<DocValue | Doc[]> {
   _syncing = false;
   _addDocToSyncQueue = true;
 
-  /**
-   * Snapshot of filesystem-backed file references as of last load/sync.
-   * Used to delete files only when changes are committed (on sync),
-   * not when the user clears a field but doesn't save.
-   */
-  _fsFileRefSnapshot: Set<string> = new Set();
-  _pendingFsFileDeletes: Set<string> = new Set();
+  attachments: DocAttachmentManager;
 
   constructor(
     schema: Schema,
@@ -132,6 +98,9 @@ export class Doc extends Observable<DocValue | Doc[]> {
     }
 
     this._setDefaults();
+    this.attachments = markRaw(
+      new DocAttachmentManager(this, ATTACH_IMAGE_FILE_REF_PREFIX)
+    );
     this._setValuesWithoutChecks(data, convertToDocValue);
     return reactive(this) as Doc;
   }
@@ -379,7 +348,7 @@ export class Doc extends Observable<DocValue | Doc[]> {
     } else {
       const field = this.fieldMap[fieldname];
       await this._validateField(field, value);
-      value = (await this._normalizeFileFieldValueBeforeSet(
+      value = (await this.attachments.normalizeBeforeSet(
         field,
         value
       )) as DocValue;
@@ -395,106 +364,6 @@ export class Doc extends Observable<DocValue | Doc[]> {
     }
 
     return true;
-  }
-
-  async _normalizeFileFieldValueBeforeSet(field: Field, value: unknown) {
-    const storage =
-      ((this.fyo.singles.SystemSettings as any)?.attachmentStorage as
-        | 'database'
-        | 'filesystem'
-        | undefined) ?? 'database';
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ipcApi = (globalThis as any)?.ipc;
-    const dbPath = (this.fyo.db as any)?.dbPath as string | undefined;
-    const canUseFs =
-      storage === 'filesystem' &&
-      this.fyo.isElectron &&
-      !!dbPath &&
-      ipcApi?.desktop &&
-      typeof ipcApi.attachments?.save === 'function' &&
-      typeof ipcApi.attachments?.delete === 'function';
-
-    if (field.fieldtype === FieldTypeEnum.Attachment) {
-      const v = value as
-        | null
-        | undefined
-        | {
-            name?: string;
-            type?: string;
-            data?: string;
-            path?: string;
-            bytes?: Uint8Array;
-          };
-      if (!v) return value;
-
-      const prev = this.get(field.fieldname) as any;
-      const prevPath = typeof prev?.path === 'string' ? prev.path : null;
-
-      if (v.bytes instanceof Uint8Array && v.name && v.type) {
-        if (canUseFs) {
-          const res = (await ipcApi.attachments.save({
-            dbPath,
-            name: v.name,
-            type: v.type,
-            data: v.bytes,
-          })) as { success?: boolean; attachment?: { path?: string } };
-
-          const newPath = res?.success ? res?.attachment?.path : undefined;
-          if (newPath) {
-            if (prevPath) {
-              // Defer deletion until after a successful sync().
-              this._pendingFsFileDeletes.add(prevPath);
-            }
-            return { name: v.name, type: v.type, path: newPath };
-          }
-        }
-
-        // DB fallback (or if filesystem save fails): embed into DB.
-        return { name: v.name, type: v.type, data: dataUrlFromBytes(v.type, v.bytes) };
-      }
-
-      return value;
-    }
-
-    if (field.fieldtype === FieldTypeEnum.AttachImage) {
-      if (typeof value === 'string' || value === null) {
-        return value;
-      }
-
-      const v = value as { name?: string; type?: string; data?: Uint8Array };
-      if (!(v?.data instanceof Uint8Array) || !v.type) {
-        return value;
-      }
-
-      const prev = this.get(field.fieldname) as any;
-      const prevRef =
-        typeof prev === 'string' && prev.startsWith(ATTACH_IMAGE_FILE_REF_PREFIX)
-          ? prev.slice(ATTACH_IMAGE_FILE_REF_PREFIX.length)
-          : null;
-
-      if (canUseFs) {
-        const res = (await ipcApi.attachments.save({
-          dbPath,
-          name: v.name || 'image',
-          type: v.type,
-          data: v.data,
-        })) as { success?: boolean; attachment?: { path?: string } };
-
-        const newPath = res?.success ? res?.attachment?.path : undefined;
-        if (newPath) {
-          if (prevRef) {
-            // Defer deletion until after a successful sync().
-            this._pendingFsFileDeletes.add(prevRef);
-          }
-          return `${ATTACH_IMAGE_FILE_REF_PREFIX}${newPath}`;
-        }
-      }
-
-      return dataUrlFromBytes(v.type, v.data);
-    }
-
-    return value;
   }
 
   async setMultiple(docValueMap: DocValueMap): Promise<boolean> {
@@ -858,11 +727,14 @@ export class Doc extends Observable<DocValue | Doc[]> {
   }
 
   async _syncValues(data: DocValueMap) {
+    if (!this._syncing) {
+      await this.attachments.discardStagedOnReload();
+    }
     this._clearValues();
     this._setValuesWithoutChecks(data, false);
     await this._setComputedValuesFromFormulas();
     this._dirty = false;
-    this._fsFileRefSnapshot = this._collectFilesystemFileRefs();
+    this.attachments.snapshotAfterLoadOrSync();
     this.trigger('change', {
       doc: this,
     });
@@ -1039,91 +911,7 @@ export class Doc extends Observable<DocValue | Doc[]> {
 
     // Prepare commit-time cleanup: identify filesystem-backed files that were
     // removed/replaced since the last successful load/sync.
-    this._prepareRemovedFilesystemFilesOnSync();
-  }
-
-  _collectFilesystemFileRefs(): Set<string> {
-    const refs = new Set<string>();
-    const scan = (doc: Doc) => {
-      for (const field of doc.schema.fields) {
-        if (field.meta) continue;
-        const value = doc.get(field.fieldname) as unknown;
-
-        if (field.fieldtype === FieldTypeEnum.Attachment) {
-          const v = value as undefined | null | { path?: string };
-          if (v?.path && typeof v.path === 'string') {
-            refs.add(v.path);
-          }
-          continue;
-        }
-
-        if (field.fieldtype === FieldTypeEnum.AttachImage) {
-          const v = value as string | null | undefined;
-          if (
-            typeof v === 'string' &&
-            v.startsWith(ATTACH_IMAGE_FILE_REF_PREFIX) &&
-            v.length > ATTACH_IMAGE_FILE_REF_PREFIX.length
-          ) {
-            refs.add(v.slice(ATTACH_IMAGE_FILE_REF_PREFIX.length));
-          }
-          continue;
-        }
-
-        if (field.fieldtype === FieldTypeEnum.Table) {
-          if (Array.isArray(value)) {
-            for (const row of value) {
-              if (row instanceof Doc) {
-                scan(row);
-              }
-            }
-          }
-        }
-      }
-    };
-
-    scan(this);
-    return refs;
-  }
-
-  _prepareRemovedFilesystemFilesOnSync() {
-    const current = this._collectFilesystemFileRefs();
-    const removed = new Set<string>(this._pendingFsFileDeletes);
-    for (const oldRef of this._fsFileRefSnapshot) {
-      if (!current.has(oldRef)) {
-        removed.add(oldRef);
-      }
-    }
-    this._pendingFsFileDeletes = removed;
-  }
-
-  async _flushPendingFilesystemDeletesAfterSync() {
-    if (!this._pendingFsFileDeletes.size) {
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ipcApi = (globalThis as any)?.ipc;
-    const dbPath = (this.fyo.db as any)?.dbPath as string | undefined;
-    if (!this.fyo.isElectron || !dbPath) {
-      this._pendingFsFileDeletes.clear();
-      return;
-    }
-    if (!ipcApi?.desktop || typeof ipcApi.attachments?.delete !== 'function') {
-      this._pendingFsFileDeletes.clear();
-      return;
-    }
-
-    const paths = Array.from(this._pendingFsFileDeletes);
-    this._pendingFsFileDeletes.clear();
-    await Promise.all(
-      paths.map(async (path) => {
-        try {
-          await ipcApi.attachments.delete({ dbPath, path });
-        } catch {
-          // best-effort
-        }
-      })
-    );
+    this.attachments.prepareRemovedOnPreSync();
   }
 
   async _insert() {
@@ -1131,11 +919,17 @@ export class Doc extends Observable<DocValue | Doc[]> {
     await this._preSync();
     await setName(this, this.fyo);
 
+    const pathsCommittedBeforeDb =
+      await this.attachments.commitStagedBeforeDbWrite();
+
     const validDict = this.getValidDict(false, true);
     let data: DocValueMap;
     try {
       data = await this.fyo.db.insert(this.schemaName, validDict);
     } catch (err) {
+      await this.attachments.recoverAfterFailedDbWrite(pathsCommittedBeforeDb, {
+        failedDuringInsert: true,
+      });
       throw await getDbSyncError(err as Error, this, this.fyo);
     }
     await this._syncValues(data);
@@ -1149,10 +943,16 @@ export class Doc extends Observable<DocValue | Doc[]> {
     this._updateModifiedMetaValues();
     await this._preSync();
 
+    const pathsCommittedBeforeDb =
+      await this.attachments.commitStagedBeforeDbWrite();
+
     const data = this.getValidDict(false, true);
     try {
       await this.fyo.db.update(this.schemaName, data);
     } catch (err) {
+      await this.attachments.recoverAfterFailedDbWrite(pathsCommittedBeforeDb, {
+        failedDuringInsert: false,
+      });
       throw await getDbSyncError(err as Error, this, this.fyo);
     }
     await this._syncValues(data);
@@ -1181,54 +981,57 @@ export class Doc extends Observable<DocValue | Doc[]> {
 
   async sync(): Promise<Doc> {
     this._syncing = true;
-    await this.trigger('beforeSync');
-    let doc;
-    if (this.notInserted) {
-      doc = await this._insert();
-    } else {
-      doc = await this._update();
-    }
-    await this._flushPendingFilesystemDeletesAfterSync();
-    this._notInserted = false;
-    await this.trigger('afterSync');
-    this.fyo.doc.observer.trigger(`sync:${this.schemaName}`, this.name);
+    try {
+      await this.trigger('beforeSync');
+      let doc;
+      if (this.notInserted) {
+        doc = await this._insert();
+      } else {
+        doc = await this._update();
+      }
+      await this.attachments.flushPendingDeletesAfterSync();
+      this._notInserted = false;
+      await this.trigger('afterSync');
+      this.fyo.doc.observer.trigger(`sync:${this.schemaName}`, this.name);
 
-    if (this._addDocToSyncQueue && !!this.shouldDocSyncToERPNext) {
-      const isSalesInvoice = this.schemaName === ModelNameEnum.SalesInvoice;
-      const hasERPSyncableItems = await this._hasERPSyncableItems();
+      if (this._addDocToSyncQueue && !!this.shouldDocSyncToERPNext) {
+        const isSalesInvoice = this.schemaName === ModelNameEnum.SalesInvoice;
+        const hasERPSyncableItems = await this._hasERPSyncableItems();
 
-      if (
-        hasERPSyncableItems &&
-        (!(isSalesInvoice && this.isSyncedWithErp) ||
-          (isSalesInvoice && !!this.isReturn))
-      ) {
-        if (isSalesInvoice && !this.isReturn) {
-          await this.setAndSync('isSyncedWithErp', true);
-        }
-
-        const isDocExistsInQueue = await this.fyo.db.getAll(
-          ModelNameEnum.ERPNextSyncQueue,
-          {
-            filters: {
-              referenceType: this.schemaName,
-              documentName: this.name as string,
-            },
+        if (
+          hasERPSyncableItems &&
+          (!(isSalesInvoice && this.isSyncedWithErp) ||
+            (isSalesInvoice && !!this.isReturn))
+        ) {
+          if (isSalesInvoice && !this.isReturn) {
+            await this.setAndSync('isSyncedWithErp', true);
           }
-        );
 
-        if (!isDocExistsInQueue.length) {
-          await this.fyo.doc
-            .getNewDoc(ModelNameEnum.ERPNextSyncQueue, {
-              referenceType: this.schemaName,
-              documentName: this.name,
-            })
-            .sync();
+          const isDocExistsInQueue = await this.fyo.db.getAll(
+            ModelNameEnum.ERPNextSyncQueue,
+            {
+              filters: {
+                referenceType: this.schemaName,
+                documentName: this.name as string,
+              },
+            }
+          );
+
+          if (!isDocExistsInQueue.length) {
+            await this.fyo.doc
+              .getNewDoc(ModelNameEnum.ERPNextSyncQueue, {
+                referenceType: this.schemaName,
+                documentName: this.name,
+              })
+              .sync();
+          }
         }
       }
-    }
 
-    this._syncing = false;
-    return doc;
+      return doc;
+    } finally {
+      this._syncing = false;
+    }
   }
 
   async delete() {
@@ -1241,80 +1044,21 @@ export class Doc extends Observable<DocValue | Doc[]> {
     }
 
     await this.trigger('beforeDelete');
-    // Best-effort cleanup for filesystem-backed attachments/images.
-    try {
-      await this.#cleanupFileBackedFieldsBeforeDelete();
-    } catch {}
+    const refs = this.attachments.extractRefsForDelete();
     await this.fyo.db.delete(this.schemaName, this.name!);
+    // Best-effort cleanup for filesystem-backed attachments/images (after DB delete).
+    try {
+      await this.attachments.cleanupCapturedRefsAfterDelete(refs);
+    } catch (err) {
+      console.error(
+        `[books] best-effort attachment cleanup failed after delete (${this.schemaName} ${this.name ?? ''})`,
+        err
+      );
+    }
     await this.trigger('afterDelete');
 
     this.fyo.telemetry.log(Verb.Deleted, this.schemaName);
     this.fyo.doc.observer.trigger(`delete:${this.schemaName}`, this.name);
-  }
-
-  static #attachImageFileRefPrefix = 'books-file:';
-
-  async #cleanupFileBackedFieldsBeforeDelete() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ipcApi = (globalThis as any)?.ipc;
-    const dbPath = (this.fyo.db as any)?.dbPath as string | undefined;
-    if (!this.fyo.isElectron || !dbPath) {
-      return;
-    }
-    if (!ipcApi?.desktop || typeof ipcApi.attachments?.delete !== 'function') {
-      return;
-    }
-
-    const paths = new Set<string>();
-    const scan = (doc: Doc) => {
-      for (const field of doc.schema.fields) {
-        if (field.meta) continue;
-        const { fieldname, fieldtype } = field;
-        const value = doc.get(fieldname) as unknown;
-
-        if (fieldtype === FieldTypeEnum.Attachment) {
-          const v = value as undefined | null | { path?: string };
-          if (v?.path && typeof v.path === 'string') {
-            paths.add(v.path);
-          }
-          continue;
-        }
-
-        if (fieldtype === FieldTypeEnum.AttachImage) {
-          const v = value as string | null | undefined;
-          if (
-            typeof v === 'string' &&
-            v.startsWith(Doc.#attachImageFileRefPrefix) &&
-            v.length > Doc.#attachImageFileRefPrefix.length
-          ) {
-            paths.add(v.slice(Doc.#attachImageFileRefPrefix.length));
-          }
-          continue;
-        }
-
-        if (fieldtype === FieldTypeEnum.Table) {
-          if (Array.isArray(value)) {
-            for (const row of value) {
-              if (row instanceof Doc) {
-                scan(row);
-              }
-            }
-          }
-        }
-      }
-    };
-
-    scan(this);
-
-    await Promise.all(
-      Array.from(paths).map(async (p) => {
-        try {
-          await ipcApi.attachments.delete({ dbPath, path: p });
-        } catch {
-          // best-effort
-        }
-      })
-    );
   }
 
   async submit() {
@@ -1396,6 +1140,13 @@ export class Doc extends Observable<DocValue | Doc[]> {
     return await this.sync();
   }
 
+  /**
+   * Clones current field values into a new unsaved document (synchronous).
+   * For any duplicate that will be edited or saved in the app, prefer
+   * {@link Doc.duplicateForEdit} so filesystem attachments are remapped to staged
+   * copies (Electron). Use this only when you need a sync clone without IPC
+   * (e.g. some tests).
+   */
   duplicate(): Doc {
     const updateMap = this.getValidDict(true, true);
     for (const field in updateMap) {
@@ -1426,6 +1177,17 @@ export class Doc extends Observable<DocValue | Doc[]> {
     ) as RawValueMap;
 
     return this.fyo.doc.getNewDoc(this.schemaName, rawUpdateMap, true);
+  }
+
+  /**
+   * Runs {@link Doc.duplicate} (including subclass overrides), then remaps
+   * committed filesystem attachment paths to staged temp files so the copy follows
+   * the same save lifecycle as a new upload. Use for every user-facing duplicate.
+   */
+  async duplicateForEdit(): Promise<Doc> {
+    const dupe = this.duplicate();
+    await dupe.attachments.remapCommittedFilesystemAttachmentsToStagedAfterDuplicate();
+    return dupe;
   }
 
   /**

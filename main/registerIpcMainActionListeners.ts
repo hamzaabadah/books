@@ -10,12 +10,14 @@ import { autoUpdater } from 'electron-updater';
 import { constants } from 'fs';
 import fs from 'fs-extra';
 import path from 'path';
+import { tmpdir } from 'os';
 import { SelectFileOptions, SelectFileReturn } from 'utils/types';
 import databaseManager from 'backend/database/manager';
 import { emitMainProcessError } from 'backend/helpers';
 import { Main } from 'main';
 import { DatabaseMethod } from 'utils/db/types';
 import { IPC_ACTIONS, IPC_CHANNELS } from 'utils/messages';
+import { mimeTypeFromFilename } from 'utils/mimeType';
 import { getUrlAndTokenString, sendError } from './contactMothership';
 import { getLanguageMap } from './getLanguageMap';
 import { getTemplates } from './getPrintTemplates';
@@ -52,6 +54,75 @@ function getAttachmentRootForDb(dbPath: string) {
   const dir = path.dirname(dbPath);
   const dbBase = path.basename(dbPath, '.books.db');
   return path.join(dir, 'attachments', dbBase || 'default');
+}
+
+function getAttachmentStageRootForDb(dbPath: string) {
+  const dbBase = path.basename(dbPath, '.books.db');
+  return path.join(tmpdir(), 'rukn-books', 'attachments-stage', dbBase || 'default');
+}
+
+function isPathInsideStageRoot(stagePath: string): boolean {
+  const resolved = path.resolve(stagePath);
+  const prefix = path.join(tmpdir(), 'rukn-books', 'attachments-stage');
+  const normalizedPrefix = path.resolve(prefix);
+  return resolved.startsWith(normalizedPrefix + path.sep);
+}
+
+type ParsedAttachmentParams =
+  | { ok: true; dbPath: string; name: string; type: string; bytes: Uint8Array }
+  | { ok: false; message: string };
+
+function normalizeIncomingAttachmentBytes(data: unknown): Uint8Array | null {
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return new Uint8Array(data);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return null;
+}
+
+function parseAttachmentParams(
+  params:
+    | { dbPath: string; name: string; type: string; data: unknown }
+    | null
+    | undefined
+): ParsedAttachmentParams {
+  const { dbPath, name, type, data } = params ?? {};
+  if (!dbPath || typeof dbPath !== 'string') {
+    return { ok: false, message: 'Missing dbPath' };
+  }
+  if (!name || typeof name !== 'string') {
+    return { ok: false, message: 'Missing file name' };
+  }
+  if (!type || typeof type !== 'string') {
+    return { ok: false, message: 'Missing file type' };
+  }
+  const bytes = normalizeIncomingAttachmentBytes(data);
+  if (!bytes) {
+    return { ok: false, message: 'Missing file data' };
+  }
+  return { ok: true, dbPath, name, type, bytes };
+}
+
+async function writeStampedAttachmentFile(
+  rootDir: string,
+  originalName: string,
+  bytes: Uint8Array
+): Promise<{ fullPath: string; safeName: string }> {
+  await fs.ensureDir(rootDir);
+  const safeName = sanitizeFilename(originalName) || 'attachment';
+  const stamp = new Date().toISOString().replace(/[-T:.Z]/g, '');
+  const filename = `${stamp}_${safeName}`;
+  const fullPath = path.join(rootDir, filename);
+  await fs.writeFile(fullPath, Buffer.from(bytes));
+  return { fullPath, safeName };
 }
 
 export default function registerIpcMainActionListeners(main: Main) {
@@ -450,40 +521,18 @@ export default function registerIpcMainActionListeners(main: Main) {
       params: { dbPath: string; name: string; type: string; data: unknown }
     ) => {
       return await getErrorHandledReponse(async () => {
-        const { dbPath, name, type, data } = params ?? {};
-        if (!dbPath || typeof dbPath !== 'string') {
-          return { success: false, message: 'Missing dbPath' };
+        const parsed = parseAttachmentParams(params);
+        if (!parsed.ok) {
+          return { success: false, message: parsed.message };
         }
-        if (!name || typeof name !== 'string') {
-          return { success: false, message: 'Missing file name' };
-        }
-        if (!type || typeof type !== 'string') {
-          return { success: false, message: 'Missing file type' };
-        }
-
-        let bytes: Uint8Array | null = null;
-        if (data instanceof Uint8Array) {
-          bytes = data;
-        } else if (Buffer.isBuffer(data)) {
-          bytes = new Uint8Array(data);
-        } else if (data instanceof ArrayBuffer) {
-          bytes = new Uint8Array(data);
-        } else if (ArrayBuffer.isView(data)) {
-          bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        }
-
-        if (!bytes) {
-          return { success: false, message: 'Missing file data' };
-        }
+        const { dbPath, name, type, bytes } = parsed;
 
         const root = getAttachmentRootForDb(dbPath);
-        await fs.ensureDir(root);
-
-        const safeName = sanitizeFilename(name) || 'attachment';
-        const stamp = new Date().toISOString().replace(/[-T:.Z]/g, '');
-        const filename = `${stamp}_${safeName}`;
-        const fullPath = path.join(root, filename);
-        await fs.writeFile(fullPath, Buffer.from(bytes));
+        const { fullPath, safeName } = await writeStampedAttachmentFile(
+          root,
+          name,
+          bytes
+        );
 
         const relativePath = path.relative(path.dirname(dbPath), fullPath);
         return {
@@ -510,10 +559,11 @@ export default function registerIpcMainActionListeners(main: Main) {
           ? relOrAbs
           : path.join(path.dirname(dbPath), relOrAbs);
         const buf = await fs.readFile(fullPath);
+        const name = path.basename(fullPath);
         return {
           success: true,
-          name: path.basename(fullPath),
-          type: undefined,
+          name,
+          type: mimeTypeFromFilename(name),
           data: new Uint8Array(buf),
         };
       });
@@ -536,6 +586,96 @@ export default function registerIpcMainActionListeners(main: Main) {
           ? relOrAbs
           : path.join(path.dirname(dbPath), relOrAbs);
         await fs.remove(fullPath);
+        return { success: true };
+      });
+    }
+  );
+
+  /**
+   * Staging: write bytes to OS temp until document sync commits to attachments folder.
+   */
+  ipcMain.handle(
+    IPC_ACTIONS.ATTACHMENT_STAGE_SAVE,
+    async (
+      _,
+      params: { dbPath: string; name: string; type: string; data: unknown }
+    ) => {
+      return await getErrorHandledReponse(async () => {
+        const parsed = parseAttachmentParams(params);
+        if (!parsed.ok) {
+          return { success: false, message: parsed.message };
+        }
+        const { dbPath, name, type, bytes } = parsed;
+
+        const stageRoot = getAttachmentStageRootForDb(dbPath);
+        const { fullPath, safeName } = await writeStampedAttachmentFile(
+          stageRoot,
+          name,
+          bytes
+        );
+
+        return {
+          success: true,
+          stagePath: fullPath,
+          attachment: {
+            name: safeName,
+            type,
+            stagePath: fullPath,
+          },
+        };
+      });
+    }
+  );
+
+  ipcMain.handle(
+    IPC_ACTIONS.ATTACHMENT_STAGE_COMMIT,
+    async (_, params: { dbPath: string; stagePath: string }) => {
+      return await getErrorHandledReponse(async () => {
+        const { dbPath, stagePath } = params ?? {};
+        if (!dbPath || typeof dbPath !== 'string') {
+          return { success: false, message: 'Missing dbPath' };
+        }
+        if (!stagePath || typeof stagePath !== 'string') {
+          return { success: false, message: 'Missing stage path' };
+        }
+        if (!isPathInsideStageRoot(stagePath)) {
+          return { success: false, message: 'Invalid stage path' };
+        }
+        if (!(await fs.pathExists(stagePath))) {
+          return { success: false, message: 'Staged file not found' };
+        }
+
+        const finalRoot = getAttachmentRootForDb(dbPath);
+        await fs.ensureDir(finalRoot);
+
+        const baseName = path.basename(stagePath);
+        const dest = path.join(finalRoot, baseName);
+        await fs.move(stagePath, dest, { overwrite: true });
+
+        const relativePath = path.relative(path.dirname(dbPath), dest);
+        return {
+          success: true,
+          attachment: {
+            name: baseName,
+            path: relativePath,
+          },
+        };
+      });
+    }
+  );
+
+  ipcMain.handle(
+    IPC_ACTIONS.ATTACHMENT_STAGE_DELETE,
+    async (_, params: { stagePath: string }) => {
+      return await getErrorHandledReponse(async () => {
+        const { stagePath } = params ?? {};
+        if (!stagePath || typeof stagePath !== 'string') {
+          return { success: false, message: 'Missing stage path' };
+        }
+        if (!isPathInsideStageRoot(stagePath)) {
+          return { success: false, message: 'Invalid stage path' };
+        }
+        await fs.remove(stagePath);
         return { success: true };
       });
     }
