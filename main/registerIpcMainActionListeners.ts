@@ -41,6 +41,7 @@ import verifyTokenWithServer, {
   syncDatabaseToServer,
   reportIssueToServer,
 } from './subscription';
+import { getDemoDataset, listDemoDatasets } from './demoData';
 
 function sanitizeFilename(name: string) {
   return name
@@ -463,6 +464,41 @@ export default function registerIpcMainActionListeners(main: Main) {
       return await reportIssueToServer(token, payload);
     }
   );
+
+  ipcMain.handle(IPC_ACTIONS.LIST_DEMO_DATASETS, async () => {
+    const token = retrieveToken();
+    if (!token) {
+      return {
+        success: false,
+        message: 'No subscription token',
+        datasets: [],
+      };
+    }
+    try {
+      return await listDemoDatasets(token);
+    } catch (error) {
+      return {
+        success: false,
+        message: (error as Error).message || 'Failed to list demo datasets',
+        datasets: [],
+      };
+    }
+  });
+
+  ipcMain.handle(IPC_ACTIONS.GET_DEMO_DATASET, async (_, key: string) => {
+    const token = retrieveToken();
+    if (!token) {
+      return { success: false, message: 'No subscription token' };
+    }
+    try {
+      return await getDemoDataset(token, key);
+    } catch (error) {
+      return {
+        success: false,
+        message: (error as Error).message || 'Failed to get demo dataset',
+      };
+    }
+  });
 
   /**
    * Database Related Actions

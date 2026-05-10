@@ -11,60 +11,245 @@ import setupInstance from 'src/setup/setupInstance';
 import { getMapFromList, safeParseInt } from 'utils';
 import { getFiscalYear } from 'utils/misc';
 import {
-  flow,
-  getFlowConstant,
+  getFlowConstantWithFlow,
   getRandomDates,
-  purchaseItemPartyMap,
+  resetDummyHelpers,
+  resolveDummyFlow,
+  resolvePurchaseItemPartyLookup,
 } from './helpers';
-import items from './items.json';
+import itemsCatalogDefault from './items.json';
 import logo from './logo';
-import parties from './parties.json';
+import partiesCatalogDefault from './parties.json';
+import type { DemoDatasetPayload, DemoItemSeed } from './types';
+
+export type { DemoDatasetPayload } from './types';
 
 type Notifier = (stage: string, percent: number) => void;
+
+type CatalogItem = DemoItemSeed;
+type CatalogParty = typeof partiesCatalogDefault[number];
+
+const DEFAULT_PERIODIC_PURCHASES: Record<string, number> = {
+  'Marketing - Video': 2,
+  'Social Ads': 1,
+  Electricity: 1,
+  'Office Cleaning': 1,
+  'Office Rent': 1,
+};
+
+/** Per-run dummy generator state (safe for concurrent setupDummyInstance calls). */
+type DummyRunContext = {
+  payload: DemoDatasetPayload | null;
+  catalogItems: CatalogItem[];
+  catalogParties: CatalogParty[];
+  flow: number[];
+  purchaseItemPartyMap: Record<string, string>;
+};
+
+function createDummyRunContext(
+  payload?: DemoDatasetPayload | null
+): DummyRunContext {
+  const catalogItems =
+    (payload?.items as CatalogItem[]) ?? (itemsCatalogDefault as CatalogItem[]);
+  const catalogParties =
+    (payload?.parties as CatalogParty[]) ?? partiesCatalogDefault;
+  return {
+    payload: payload ?? null,
+    catalogItems,
+    catalogParties,
+    flow: resolveDummyFlow(payload?.flow ?? null),
+    purchaseItemPartyMap: resolvePurchaseItemPartyLookup(
+      payload?.partyPurchaseItemMap ?? null
+    ),
+  };
+}
+
+async function defaultReceivableAccount(fyo: Fyo): Promise<string> {
+  if (await fyo.db.exists(ModelNameEnum.Account, 'Debtors')) {
+    return 'Debtors';
+  }
+  if (await fyo.db.exists(ModelNameEnum.Account, 'Trade Receivable')) {
+    return 'Trade Receivable';
+  }
+  const rows = (await fyo.db.getAll(ModelNameEnum.Account, {
+    fields: ['name'],
+    filters: { accountType: 'Receivable', isGroup: false },
+    limit: 1,
+  })) as { name: string }[];
+  return rows[0]?.name ?? 'Debtors';
+}
+
+async function defaultPayableAccount(fyo: Fyo): Promise<string> {
+  if (await fyo.db.exists(ModelNameEnum.Account, 'Creditors')) {
+    return 'Creditors';
+  }
+  if (await fyo.db.exists(ModelNameEnum.Account, 'Trade Payable')) {
+    return 'Trade Payable';
+  }
+  const rows = (await fyo.db.getAll(ModelNameEnum.Account, {
+    fields: ['name'],
+    filters: { accountType: 'Payable', isGroup: false },
+    limit: 1,
+  })) as { name: string }[];
+  return rows[0]?.name ?? 'Creditors';
+}
+
+async function defaultCashAccount(fyo: Fyo): Promise<string> {
+  if (await fyo.db.exists(ModelNameEnum.Account, 'Cash')) {
+    return 'Cash';
+  }
+  const rows = (await fyo.db.getAll(ModelNameEnum.Account, {
+    fields: ['name'],
+    filters: { accountType: 'Cash', isGroup: false },
+    limit: 1,
+  })) as { name: string }[];
+  return rows[0]?.name ?? 'Cash';
+}
+
+async function ensureUnitedArabEmiratesDemoTaxes(fyo: Fyo) {
+  const specs = [
+    { name: 'VAT-5', rate: 5 },
+    { name: 'VAT-0', rate: 0 },
+  ];
+  for (const spec of specs) {
+    if (await fyo.db.exists(ModelNameEnum.Tax, spec.name)) {
+      continue;
+    }
+    const doc = fyo.doc.getNewDoc(
+      ModelNameEnum.Tax,
+      {
+        name: spec.name,
+        details: [{ account: 'Sales Tax Payable', rate: spec.rate }],
+      },
+      false
+    );
+    await doc.sync();
+  }
+}
 
 export async function setupDummyInstance(
   dbPath: string,
   fyo: Fyo,
   years = 1,
   baseCount = 1000,
-  notifier?: Notifier
+  notifier?: Notifier,
+  payload?: DemoDatasetPayload | null
 ) {
+  const ctx = createDummyRunContext(payload ?? null);
+
   await fyo.purgeCache();
   notifier?.(fyo.t`Setting Up Instance`, -1);
-  const options = {
-    logo: null,
-    companyName: "Flo's Clothes",
-    country: 'India',
-    fullname: 'Lin Florentine',
-    email: 'lin@flosclothes.com',
-    bankName: 'Supreme Bank',
-    currency: 'INR',
-    fiscalYearStart: getFiscalYear('04-01', true)!.toISOString(),
-    fiscalYearEnd: getFiscalYear('04-01', false)!.toISOString(),
-    chartOfAccounts: 'India - Chart of Accounts',
-  };
-  await setupInstance(dbPath, options, fyo);
-  fyo.store.skipTelemetryLogging = true;
 
-  years = Math.floor(years);
-  notifier?.(fyo.t`Creating Items and Parties`, -1);
-  await generateStaticEntries(fyo);
-  await generateDynamicEntries(fyo, years, baseCount, notifier);
-  await setOtherSettings(fyo);
+  const fyStart = payload?.options.fiscalYearStartMD ?? '04-01';
+  const fyEnd = payload?.options.fiscalYearEndMD ?? '04-01';
 
-  const instanceId = (await fyo.getValue(
-    ModelNameEnum.SystemSettings,
-    'instanceId'
-  )) as string;
-  await fyo.singles.SystemSettings?.setAndSync('hideGetStarted', true);
+  const options = payload
+    ? (() => {
+        const fyStartDate = getFiscalYear(fyStart, true);
+        const fyEndDate = getFiscalYear(fyEnd, false);
+        if (!fyStartDate || !fyEndDate) {
+          throw new Error(
+            `Invalid fiscal year format: start=${fyStart}, end=${fyEnd}`
+          );
+        }
+        return {
+          logo: null as string | null,
+          companyName: payload.options.companyName,
+          country: payload.options.country,
+          fullname: payload.options.fullname ?? '',
+          email: payload.options.email ?? '',
+          bankName: payload.options.bankName ?? '',
+          currency: payload.options.currency,
+          fiscalYearStart: fyStartDate.toISOString(),
+          fiscalYearEnd: fyEndDate.toISOString(),
+          chartOfAccounts: payload.options.chartOfAccounts,
+        };
+      })()
+    : {
+        logo: null as string | null,
+        companyName: "Flo's Clothes",
+        country: 'India',
+        fullname: 'Lin Florentine',
+        email: 'lin@flosclothes.com',
+        bankName: 'Supreme Bank',
+        currency: 'INR',
+        fiscalYearStart: getFiscalYear('04-01', true)!.toISOString(),
+        fiscalYearEnd: getFiscalYear('04-01', false)!.toISOString(),
+        chartOfAccounts: 'India - Chart of Accounts',
+      };
 
-  fyo.store.skipTelemetryLogging = false;
-  return { companyName: options.companyName, instanceId };
+  let prevSkipTelemetryLogging = false;
+  let skipTelemetryLoggingWasOverridden = false;
+  try {
+    await setupInstance(dbPath, options, fyo);
+    if (payload?.options.country === 'United Arab Emirates') {
+      await ensureUnitedArabEmiratesDemoTaxes(fyo);
+    }
+    prevSkipTelemetryLogging = fyo.store?.skipTelemetryLogging ?? false;
+    fyo.store.skipTelemetryLogging = true;
+    skipTelemetryLoggingWasOverridden = true;
+
+    years = Math.floor(years);
+    notifier?.(fyo.t`Creating Items and Parties`, -1);
+    await generateStaticEntries(fyo, ctx);
+    await generateDynamicEntries(fyo, years, baseCount, notifier, ctx);
+    await setOtherSettings(fyo, payload ?? undefined);
+
+    const instanceId = (await fyo.getValue(
+      ModelNameEnum.SystemSettings,
+      'instanceId'
+    )) as string;
+    await fyo.singles.SystemSettings?.setAndSync('hideGetStarted', true);
+
+    return { companyName: options.companyName, instanceId };
+  } finally {
+    if (skipTelemetryLoggingWasOverridden) {
+      fyo.store.skipTelemetryLogging = prevSkipTelemetryLogging;
+    }
+    resetDummyHelpers();
+  }
 }
 
-async function setOtherSettings(fyo: Fyo) {
+async function setOtherSettings(fyo: Fyo, payload?: DemoDatasetPayload) {
   const doc = await fyo.doc.getDoc(ModelNameEnum.PrintSettings);
   const address = fyo.doc.getNewDoc(ModelNameEnum.Address);
+
+  if (payload?.address) {
+    const emirateOrState = payload.address.state || payload.address.city || '';
+    await address.setAndSync({
+      addressLine1: payload.address.addressLine1 ?? '',
+      city: payload.address.city ?? '',
+      state: payload.address.state ?? '',
+      pos: emirateOrState,
+      postalCode: payload.address.postalCode ?? '',
+      country: payload.address.country ?? payload.options.country,
+    });
+
+    const ps = payload.printSettings;
+    const displayLogo =
+      typeof ps.displayLogo === 'boolean'
+        ? ps.displayLogo
+        : Boolean(ps.displayLogo);
+    await doc.setAndSync({
+      color: ps.color ?? '#F687B3',
+      template: 'Business',
+      displayLogo,
+      phone: payload.accounting.phone ?? '',
+      logo,
+      address: address.name,
+    });
+
+    const acc = await fyo.doc.getDoc(ModelNameEnum.AccountingSettings);
+    const patch: Record<string, string> = {};
+    if (payload.options.country === 'India' && payload.accounting.taxId) {
+      patch.gstin = payload.accounting.taxId;
+    }
+    if (Object.keys(patch).length) {
+      await acc.setAndSync(patch);
+    }
+    return;
+  }
+
   await address.setAndSync({
     addressLine1: '1st Column, Fitzgerald Bridge',
     city: 'Pune',
@@ -97,15 +282,27 @@ async function generateDynamicEntries(
   fyo: Fyo,
   years: number,
   baseCount: number,
-  notifier?: Notifier
+  notifier: Notifier | undefined,
+  ctx: DummyRunContext
 ) {
-  const salesInvoices = await getSalesInvoices(fyo, years, baseCount, notifier);
+  const salesInvoices = await getSalesInvoices(
+    fyo,
+    years,
+    baseCount,
+    notifier,
+    ctx
+  );
 
   notifier?.(fyo.t`Creating Purchase Invoices`, -1);
-  const purchaseInvoices = await getPurchaseInvoices(fyo, years, salesInvoices);
+  const purchaseInvoices = await getPurchaseInvoices(
+    fyo,
+    years,
+    salesInvoices,
+    ctx
+  );
 
   notifier?.(fyo.t`Creating Journal Entries`, -1);
-  const journalEntries = await getJournalEntries(fyo, salesInvoices);
+  const journalEntries = await getJournalEntries(fyo, salesInvoices, ctx);
   await syncAndSubmit(journalEntries, notifier);
 
   const invoices = ([salesInvoices, purchaseInvoices].flat() as Invoice[]).sort(
@@ -117,7 +314,14 @@ async function generateDynamicEntries(
   await syncAndSubmit(payments, notifier);
 }
 
-async function getJournalEntries(fyo: Fyo, salesInvoices: SalesInvoice[]) {
+async function getJournalEntries(
+  fyo: Fyo,
+  salesInvoices: SalesInvoice[],
+  ctx: DummyRunContext
+) {
+  if (ctx.payload?.options.country === 'United Arab Emirates') {
+    return [];
+  }
   const entries = [];
   const amount = salesInvoices
     .map((i) => i.items!)
@@ -177,6 +381,9 @@ async function getJournalEntries(fyo: Fyo, salesInvoices: SalesInvoice[]) {
 }
 
 async function getPayments(fyo: Fyo, invoices: Invoice[]) {
+  const recvAccount = await defaultReceivableAccount(fyo);
+  const payAccount = await defaultPayableAccount(fyo);
+  const cashAccount = await defaultCashAccount(fyo);
   const payments = [];
   for (const invoice of invoices) {
     // Defaulters
@@ -192,11 +399,11 @@ async function getPayments(fyo: Fyo, invoices: Invoice[]) {
       .plus({ hours: 1 })
       .toJSDate();
     if (doc.paymentType === 'Receive') {
-      doc.account = 'Debtors';
-      doc.paymentAccount = 'Cash';
+      doc.account = recvAccount;
+      doc.paymentAccount = cashAccount;
     } else {
-      doc.account = 'Cash';
-      doc.paymentAccount = 'Creditors';
+      doc.account = cashAccount;
+      doc.paymentAccount = payAccount;
     }
     doc.amount = invoice.outstandingAmount;
 
@@ -221,10 +428,14 @@ async function getPayments(fyo: Fyo, invoices: Invoice[]) {
   return payments;
 }
 
-function getSalesInvoiceDates(years: number, baseCount: number): Date[] {
+function getSalesInvoiceDates(
+  years: number,
+  baseCount: number,
+  ctx: DummyRunContext
+): Date[] {
   const dates: Date[] = [];
   for (const months of range(0, years * 12)) {
-    const flow = getFlowConstant(months);
+    const flow = getFlowConstantWithFlow(months, ctx.flow);
     const count = Math.ceil(flow * baseCount * (Math.random() * 0.25 + 0.75));
     dates.push(...getRandomDates(count, months));
   }
@@ -236,17 +447,21 @@ async function getSalesInvoices(
   fyo: Fyo,
   years: number,
   baseCount: number,
-  notifier?: Notifier
+  notifier: Notifier | undefined,
+  ctx: DummyRunContext
 ) {
   const invoices: SalesInvoice[] = [];
-  const salesItems = items.filter((i) => i.for !== 'Purchases');
-  const customers = parties.filter((i) => i.role !== 'Supplier');
+  const recvAccount = await defaultReceivableAccount(fyo);
+  const salesItems = ctx.catalogItems.filter(
+    (i) => i.forSalesOrPurchases !== 'Purchases'
+  );
+  const customers = ctx.catalogParties.filter((i) => i.role !== 'Supplier');
 
   /**
    * Get certain number of entries for each month of the count
    * of years.
    */
-  const dates = getSalesInvoiceDates(years, baseCount);
+  const dates = getSalesInvoiceDates(years, baseCount, ctx);
 
   /**
    * For each date create a Sales Invoice.
@@ -271,7 +486,7 @@ async function getSalesInvoices(
 
     await doc.set('party', customer!.name);
     if (!doc.account) {
-      doc.account = 'Debtors';
+      doc.account = recvAccount;
     }
     /**
      * Add `numItems` number of items to the invoice.
@@ -296,7 +511,7 @@ async function getSalesInvoices(
         quantity = Math.ceil(Math.random() * 3);
       }
 
-      let fc = flow[date.getMonth()];
+      let fc = ctx.flow[date.getMonth()];
       if (baseCount < 500) {
         fc += 1;
       }
@@ -323,19 +538,22 @@ async function getSalesInvoices(
 async function getPurchaseInvoices(
   fyo: Fyo,
   years: number,
-  salesInvoices: SalesInvoice[]
+  salesInvoices: SalesInvoice[],
+  ctx: DummyRunContext
 ): Promise<PurchaseInvoice[]> {
   return [
-    await getSalesPurchaseInvoices(fyo, salesInvoices),
-    await getNonSalesPurchaseInvoices(fyo, years),
+    await getSalesPurchaseInvoices(fyo, salesInvoices, ctx),
+    await getNonSalesPurchaseInvoices(fyo, years, ctx),
   ].flat();
 }
 
 async function getSalesPurchaseInvoices(
   fyo: Fyo,
-  salesInvoices: SalesInvoice[]
+  salesInvoices: SalesInvoice[],
+  ctx: DummyRunContext
 ): Promise<PurchaseInvoice[]> {
   const invoices = [] as PurchaseInvoice[];
+  const payAccount = await defaultPayableAccount(fyo);
   /**
    * Group all sales invoices by their YYYY-MM.
    */
@@ -395,7 +613,10 @@ async function getSalesPurchaseInvoices(
     });
 
     const supplierGrouped = Object.keys(itemGrouped).reduce((acc, item) => {
-      const supplier = purchaseItemPartyMap[item];
+      const supplier = ctx.purchaseItemPartyMap[item];
+      if (!supplier) {
+        return acc;
+      }
       acc[supplier] ??= [];
       acc[supplier].push(item);
 
@@ -416,7 +637,7 @@ async function getSalesPurchaseInvoices(
 
       await doc.set('party', supplier);
       if (!doc.account) {
-        doc.account = 'Creditors';
+        doc.account = payAccount;
       }
 
       /**
@@ -437,17 +658,15 @@ async function getSalesPurchaseInvoices(
 
 async function getNonSalesPurchaseInvoices(
   fyo: Fyo,
-  years: number
+  years: number,
+  ctx: DummyRunContext
 ): Promise<PurchaseInvoice[]> {
-  const purchaseItems = items.filter((i) => i.for !== 'Sales');
+  const payAccount = await defaultPayableAccount(fyo);
+  const purchaseItems = ctx.catalogItems.filter(
+    (i) => i.forSalesOrPurchases !== 'Sales'
+  );
   const itemMap = getMapFromList(purchaseItems, 'name');
-  const periodic: Record<string, number> = {
-    'Marketing - Video': 2,
-    'Social Ads': 1,
-    Electricity: 1,
-    'Office Cleaning': 1,
-    'Office Rent': 1,
-  };
+  const periodic = ctx.payload?.periodicPurchases ?? DEFAULT_PERIODIC_PURCHASES;
   const invoices: SalesInvoice[] = [];
 
   for (const months of range(0, years * 12)) {
@@ -462,6 +681,16 @@ async function getNonSalesPurchaseInvoices(
         continue;
       }
 
+      const party = ctx.purchaseItemPartyMap[name];
+      if (!party) {
+        continue;
+      }
+
+      const item = itemMap[name];
+      if (!item) {
+        continue;
+      }
+
       const doc = fyo.doc.getNewDoc(
         ModelNameEnum.PurchaseInvoice,
         {
@@ -470,20 +699,22 @@ async function getNonSalesPurchaseInvoices(
         false
       ) as PurchaseInvoice;
 
-      const party = purchaseItemPartyMap[name];
       await doc.set('party', party);
       if (!doc.account) {
-        doc.account = 'Creditors';
+        doc.account = payAccount;
       }
       await doc.append('items', {});
       const row = doc.items!.at(-1)!;
-      const item = itemMap[name];
 
       let quantity = 1;
       let rate = item.rate;
-      if (name === 'Social Ads') {
+      const rentLike =
+        name === 'Office Rent' ||
+        name.includes('إيجار') ||
+        (typeof name === 'string' && name.toLowerCase().includes('rent'));
+      if (item.rate < 120 && !rentLike) {
         quantity = Math.ceil(Math.random() * 200);
-      } else if (name !== 'Office Rent') {
+      } else if (!rentLike) {
         rate = rate * (Math.random() * 0.4 + 0.8);
       }
 
@@ -500,21 +731,26 @@ async function getNonSalesPurchaseInvoices(
   return invoices;
 }
 
-async function generateStaticEntries(fyo: Fyo) {
-  await generateItems(fyo);
-  await generateParties(fyo);
+async function generateStaticEntries(fyo: Fyo, ctx: DummyRunContext) {
+  await generateItems(fyo, ctx);
+  await generateParties(fyo, ctx);
 }
 
-async function generateItems(fyo: Fyo) {
-  for (const item of items) {
-    const doc = fyo.doc.getNewDoc('Item', item, false);
+async function generateItems(fyo: Fyo, ctx: DummyRunContext) {
+  for (const raw of ctx.catalogItems) {
+    const { forSalesOrPurchases, ...rest } = raw;
+    const doc = fyo.doc.getNewDoc(
+      'Item',
+      { ...rest, for: forSalesOrPurchases },
+      false
+    );
     await doc.sync();
   }
 }
 
-async function generateParties(fyo: Fyo) {
-  for (const party of parties) {
-    const doc = fyo.doc.getNewDoc('Party', party, false);
+async function generateParties(fyo: Fyo, ctx: DummyRunContext) {
+  for (const raw of ctx.catalogParties) {
+    const doc = fyo.doc.getNewDoc('Party', raw, false);
     await doc.sync();
   }
 }

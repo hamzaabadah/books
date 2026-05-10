@@ -1,5 +1,9 @@
 import { DateTime } from 'luxon';
 
+export const DEFAULT_FLOW_VALUES = [
+  0.35, 0.25, 0.15, 0.15, 0.25, 0.05, 0.05, 0.15, 0.25, 0.35, 0.45, 0.55,
+];
+
 // prettier-ignore
 export const partyPurchaseItemMap: Record<string, string[]> = {
   'Janky Office Spaces': ['Office Rent', 'Office Cleaning'],
@@ -22,24 +26,98 @@ export const purchaseItemPartyMap: Record<string, string> = Object.keys(
   return acc;
 }, {} as Record<string, string>);
 
-export const flow = [
-  0.35, // Jan
-  0.25, // Feb
-  0.15, // Mar
-  0.15, // Apr
-  0.25, // May
-  0.05, // Jun
-  0.05, // Jul
-  0.15, // Aug
-  0.25, // Sep
-  0.35, // Oct
-  0.45, // Nov
-  0.55, // Dec
-];
-export function getFlowConstant(months: number) {
-  // Jan to December
+/** @deprecated use getFlowArray() for dynamic demo payloads */
+export const flow = DEFAULT_FLOW_VALUES;
+
+let activeFlow: number[] = [...DEFAULT_FLOW_VALUES];
+
+let activePurchaseItemPartyMap: Record<string, string> = {
+  ...purchaseItemPartyMap,
+};
+
+export function buildReversePurchaseMap(
+  map: Record<string, string[]>
+): Record<string, string> {
+  const acc: Record<string, string> = {};
+  for (const party of Object.keys(map)) {
+    for (const item of map[party]) {
+      acc[item] = party;
+    }
+  }
+  return acc;
+}
+
+/** Resolved flow for one run (no module globals). */
+export function resolveDummyFlow(flowOverride?: number[] | null): number[] {
+  if (flowOverride && flowOverride.length === 12) {
+    return [...flowOverride];
+  }
+  return [...DEFAULT_FLOW_VALUES];
+}
+
+/** Item name → supplier party for one run (no module globals). */
+export function resolvePurchaseItemPartyLookup(
+  partyPurchaseItemMapOverride?: Record<string, string[]> | null
+): Record<string, string> {
+  if (
+    partyPurchaseItemMapOverride &&
+    Object.keys(partyPurchaseItemMapOverride).length
+  ) {
+    return buildReversePurchaseMap(partyPurchaseItemMapOverride);
+  }
+  return { ...purchaseItemPartyMap };
+}
+
+/** Seasonality factor for `months` months back, using an explicit flow array. */
+export function getFlowConstantWithFlow(
+  months: number,
+  flow: number[]
+): number {
   const d = DateTime.now().minus({ months });
   return flow[d.month - 1];
+}
+
+export function resetDummyHelpers(): void {
+  activeFlow = [...DEFAULT_FLOW_VALUES];
+  activePurchaseItemPartyMap = { ...purchaseItemPartyMap };
+}
+
+export function applyDummyHelpersOverrides(
+  flowOverride?: number[] | null,
+  partyPurchaseItemMapOverride?: Record<string, string[]> | null
+): void {
+  resetDummyHelpers();
+  if (flowOverride != null) {
+    if (flowOverride.length === 12) {
+      activeFlow = [...flowOverride];
+    } else {
+      // eslint-disable-next-line no-console -- invalid flowOverride; warn so callers see why activeFlow was not updated
+      console.warn(
+        `[applyDummyHelpersOverrides] Ignoring flowOverride (length ${flowOverride.length}, expected 12); activeFlow stays default from resetDummyHelpers().`
+      );
+    }
+  }
+  if (
+    partyPurchaseItemMapOverride &&
+    Object.keys(partyPurchaseItemMapOverride).length
+  ) {
+    activePurchaseItemPartyMap = buildReversePurchaseMap(
+      partyPurchaseItemMapOverride
+    );
+  }
+}
+
+export function getFlowArray(): number[] {
+  return activeFlow;
+}
+
+export function getPurchaseItemPartyMap(): Record<string, string> {
+  return activePurchaseItemPartyMap;
+}
+
+export function getFlowConstant(months: number) {
+  const d = DateTime.now().minus({ months });
+  return activeFlow[d.month - 1];
 }
 
 export function getRandomDates(count: number, months: number): Date[] {
